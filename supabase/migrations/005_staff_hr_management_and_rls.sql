@@ -46,7 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_employees_phone ON public.employees(phone);
 
 -- 4. PUBLIC EMPLOYEE DIRECTORY PROJECTION (Safe for normal employee view)
 CREATE OR REPLACE VIEW public.public_employee_directory AS
-SELECT 
+SELECT
     id,
     employee_code,
     staff_id,

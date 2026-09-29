@@ -4,6 +4,7 @@
 // ==============================================================================
 
 import bcrypt from 'bcryptjs';
+import { randomInt } from 'node:crypto';
 import { db, supabase, supabaseAdmin } from '../config/database.js';
 import { supabaseAuthService } from './supabaseAuthService.js';
 import { signUserToken } from '../middleware/auth.js';
@@ -11,11 +12,8 @@ import { recordAudit } from '../middleware/auditLogger.js';
 import { emailService } from './emailService.js';
 import { normalizePhone, isEmail, normalizeEmail } from '../utils/phoneNormalizer.js';
 import { logger } from '../utils/logger.js';
-
-const isTestMode = process.env.NODE_ENV === 'test'
-  || Boolean(process.env.TEST_MODE)
-  || process.execArgv.includes('--test')
-  || process.argv.some(argument => argument.includes('test'));
+import { employeeRef, userRef } from '../utils/id.js';
+import { isTestMode } from '../utils/runtime.js';
 const CLIENT_URL = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'http://localhost:5173';
 
 function normalizeEmployeeRole(roleName) {
@@ -158,9 +156,11 @@ export const authService = {
           authUser = sbRes.data.user;
 
           if (authUser && user.auth_user_id !== authUser.id) {
-            await db.update('users', user.id, { auth_user_id: authUser.id, uuid: authUser.id });
+            await db.update('users', user.id, { auth_user_id: authUser.id });
+            user.auth_user_id = authUser.id;
           }
         } else if (sbRes?.error) {
+          if (user.auth_user_id) throw new Error('Invalid email or password.');
           // Check if local bcrypt password matches (e.g. initial seed account / offline record)
           const isMatch = user.password_hash ? await bcrypt.compare(password, user.password_hash) : false;
           if (isMatch) {
@@ -173,7 +173,8 @@ export const authService = {
                 roleCode: user.role_code
               });
               if (provisionRes?.authUserId) {
-                await db.update('users', user.id, { auth_user_id: provisionRes.authUserId, uuid: provisionRes.authUserId });
+                await db.update('users', user.id, { auth_user_id: provisionRes.authUserId });
+                user.auth_user_id = provisionRes.authUserId;
                 // Re-attempt sign-in with the freshly synced Supabase user
                 const retryLogin = await supabaseAuthService.signIn({ email: user.email, password });
                 if (retryLogin?.data?.session) {
@@ -188,7 +189,7 @@ export const authService = {
 
           if (!token) {
             if (isMatch) {
-              token = signUserToken(user);
+              throw new Error('Unable to establish your Supabase session. Please contact your administrator.');
             } else {
               throw new Error('Invalid email or password.');
             }
@@ -204,6 +205,7 @@ export const authService = {
 
     // 2. Fallback Verification (Local Store / Test Mode)
     if (!token) {
+      if (!isTestMode && user.email) throw new Error('Unable to verify your Supabase session. Please try again.');
       const isMatch = user.password_hash ? await bcrypt.compare(password, user.password_hash) : false;
       if (!isMatch) {
         throw new Error('Invalid login credentials.');
@@ -215,7 +217,8 @@ export const authService = {
     db.update('users', user.id, { last_login_at: new Date().toISOString() }).catch(() => {});
     recordAudit(user, 'LOGIN', 'users', user.id, { email: user.email, phone: user.phone }, req).catch(() => {});
 
-    const employee = await db.findOne('employees', { user_id: user.id }) ||
+    const employee = await db.findOne('employees', { user_id: userRef(user) }) ||
+                     await db.findOne('employees', { user_id: user.id }) ||
                      (user.auth_user_id ? await db.findOne('employees', { auth_user_id: user.auth_user_id }) : null);
 
     const [rank, department] = await Promise.all([
@@ -256,7 +259,8 @@ export const authService = {
 
     if (!user) throw new Error('User not found');
 
-    const employee = await db.findOne('employees', { user_id: user.id }) ||
+    const employee = await db.findOne('employees', { user_id: userRef(user) }) ||
+                     await db.findOne('employees', { user_id: user.id }) ||
                      (user.auth_user_id ? await db.findOne('employees', { auth_user_id: user.auth_user_id }) : null);
 
     const [rank, department] = await Promise.all([
@@ -295,7 +299,11 @@ export const authService = {
 
     if (!user) throw new Error('User not found');
 
-    if (currentPassword && user.password_hash) {
+    if (!currentPassword) throw new Error('Current password is required.');
+    if (!isTestMode && user.auth_user_id) {
+      const verification = await supabaseAuthService.signIn({ email: user.email, password: currentPassword });
+      if (!verification?.data?.session) throw new Error('Current password is incorrect.');
+    } else if (user.password_hash) {
       const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
       if (!isMatch) {
         throw new Error('Current password is incorrect.');
@@ -303,13 +311,9 @@ export const authService = {
     }
 
     // 1. Update in Supabase Auth if linked
-    if (supabase && !isTestMode && user.auth_user_id && supabase.auth?.admin) {
-      try {
-        await supabase.auth.admin.updateUserById(user.auth_user_id, {
-          password: newPassword
-        });
-      } catch (sbErr) {
-        logger.warn(`Supabase change password note: ${sbErr.message}`);
+    if (!isTestMode && user.auth_user_id) {
+      if (!await supabaseAuthService.updatePassword(user.auth_user_id, newPassword)) {
+        throw new Error('Password could not be updated in Supabase. Please try again.');
       }
     }
 
@@ -395,12 +399,12 @@ export const authService = {
       throw new Error('User account was not saved to Supabase.');
     }
 
-    const empCode = `EMP-${1000 + Number(user.id)}`;
+    const empCode = Number.isFinite(Number(user.id)) ? `EMP-${1000 + Number(user.id)}` : `EMP-${Date.now().toString().slice(-6)}`;
     const [firstName, ...rest] = full_name.split(' ');
     const lastName = rest.join(' ') || firstName;
 
     const employee = await db.insert('employees', {
-      user_id: user.id,
+      user_id: userRef(user) || user.id,
       auth_user_id: authUserId,
       employee_code: empCode,
       first_name: firstName,
@@ -419,7 +423,7 @@ export const authService = {
 
     // Initialize leave balance
     await db.insert('leave_balances', {
-      employee_id: employee.id,
+      employee_id: employeeRef(employee),
       year: new Date().getFullYear(),
       annual: 20,
       sick: 12,
@@ -454,7 +458,13 @@ export const authService = {
     }
 
     // 2. Deterministic Reset Token for Test Suite / Legacy Compatibility
-    const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
+    if (!isTestMode) {
+      return {
+        success: true,
+        message: 'If this account supports email recovery, a password recovery link has been requested. Please check your inbox.'
+      };
+    }
+    const resetToken = randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
     if (user) {
@@ -497,13 +507,19 @@ export const authService = {
       throw new Error('New password must be at least 8 characters long.');
     }
 
-    const user = identifier ? await findUserByIdentifier(identifier) : null;
-
-    if (user && user.auth_user_id && !isTestMode) {
-      try {
-        await supabaseAuthService.updatePassword(user.auth_user_id, newPassword);
-      } catch (sbErr) {
-        logger.warn(`Supabase password reset note: ${sbErr.message}`);
+    let user;
+    if (isTestMode) {
+      user = identifier ? await findUserByIdentifier(identifier) : null;
+      if (!user || !token || user.reset_token !== token || !(Date.parse(user.reset_token_expires_at) > Date.now())) {
+        throw new Error('Invalid or expired recovery token. Please request a new recovery link.');
+      }
+    } else {
+      const verified = token ? await supabaseAuthService.getUserFromToken(token) : null;
+      if (!verified?.id) throw new Error('Invalid or expired recovery session. Please request a new recovery link.');
+      user = await db.findOne('users', { auth_user_id: verified.id });
+      if (!user) throw new Error('No staff account is linked to this recovery session.');
+      if (!await supabaseAuthService.updatePassword(verified.id, newPassword)) {
+        throw new Error('Password could not be updated in Supabase. Please try again.');
       }
     }
 
@@ -511,8 +527,7 @@ export const authService = {
       const newHash = await bcrypt.hash(newPassword, 10);
       await db.update('users', user.id, {
         password_hash: newHash,
-        reset_token: null,
-        reset_token_expires_at: null,
+        ...(isTestMode ? { reset_token: null, reset_token_expires_at: null } : {}),
         requires_password_change: false
       });
       await recordAudit(user, 'PASSWORD_RESET_COMPLETED', 'users', user.id, { identifier }, req).catch(() => {});

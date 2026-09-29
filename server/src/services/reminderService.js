@@ -6,6 +6,7 @@
 
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { toDbId } from '../utils/id.js';
 
 export const reminderService = {
   /**
@@ -30,9 +31,9 @@ export const reminderService = {
 
     const reminder = await db.insert('task_reminders', {
       company_id: Number(company_id),
-      task_id: Number(task_id),
-      user_id: user_id ? Number(user_id) : null,
-      employee_id: employee_id ? Number(employee_id) : null,
+      task_id: toDbId(task_id),
+      user_id: user_id ? toDbId(user_id) : null,
+      employee_id: employee_id ? toDbId(employee_id) : null,
       reminder_at: new Date(reminder_at).toISOString(),
       reminder_level,
       channels: Array.isArray(channels) ? channels : ['in_app', 'email'],
@@ -59,7 +60,7 @@ export const reminderService = {
    * Cancels all scheduled reminders for a completed or cancelled task.
    */
   async cancelTaskReminders(taskId) {
-    const active = await db.find('task_reminders', { task_id: Number(taskId) });
+    const active = await db.find('task_reminders', { task_id: toDbId(taskId) });
     for (const rem of active) {
       if (rem.status === 'scheduled') {
         await db.update('task_reminders', rem.id, { status: 'cancelled' });
@@ -86,9 +87,9 @@ export const reminderService = {
 
     return await db.insert('reminder_delivery_logs', {
       company_id: Number(company_id),
-      reminder_id: reminder_id ? Number(reminder_id) : null,
-      task_id: Number(task_id),
-      user_id: user_id ? Number(user_id) : null,
+      reminder_id: reminder_id ? toDbId(reminder_id) : null,
+      task_id: toDbId(task_id),
+      user_id: user_id ? toDbId(user_id) : null,
       channel,
       status,
       provider_message_id,
@@ -103,7 +104,7 @@ export const reminderService = {
    */
   async getDeliveryLogs(taskId = null) {
     if (taskId) {
-      return await db.find('reminder_delivery_logs', { task_id: Number(taskId) }, { order: { column: 'created_at', ascending: false } });
+      return await db.find('reminder_delivery_logs', { task_id: toDbId(taskId) }, { order: { column: 'created_at', ascending: false } });
     }
     return await db.find('reminder_delivery_logs', {}, { order: { column: 'created_at', ascending: false }, limit: 100 });
   },

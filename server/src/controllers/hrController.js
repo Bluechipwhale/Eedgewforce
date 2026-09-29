@@ -4,6 +4,10 @@
 
 import { hrService } from '../services/hrService.js';
 import { db } from '../config/database.js';
+import { employeeRef, sameId } from '../utils/id.js';
+
+const matchEmployee = (employees, id) =>
+  employees.find(e => sameId(employeeRef(e), id) || sameId(e.id, id) || sameId(e.user_id, id));
 
 export const hrController = {
   async getDashboard(req, res) {
@@ -90,7 +94,7 @@ export const hrController = {
       const employees = await db.find('employees');
       const data = attendance.map(a => ({
         ...a,
-        employee: employees.find(e => Number(e.id) === Number(a.employee_id))
+        employee: matchEmployee(employees, a.employee_id)
       }));
       res.json({ success: true, data, attendance: data });
     } catch (err) {
@@ -104,7 +108,7 @@ export const hrController = {
       const employees = await db.find('employees');
       const data = alerts.map(a => ({
         ...a,
-        employee: employees.find(e => Number(e.id) === Number(a.employee_id))
+        employee: matchEmployee(employees, a.employee_id)
       }));
       res.json({ success: true, data, idle_events: data });
     } catch (err) {
@@ -118,7 +122,7 @@ export const hrController = {
       const employees = await db.find('employees');
       const data = requests.map(r => ({
         ...r,
-        employee: employees.find(e => Number(e.id) === Number(r.employee_id))
+        employee: matchEmployee(employees, r.employee_id)
       }));
       res.json({ success: true, data, leave_requests: data });
     } catch (err) {
@@ -150,7 +154,7 @@ export const hrController = {
       const employees = await db.find('employees');
       const data = tasks.map(t => ({
         ...t,
-        assignee: employees.find(e => Number(e.id) === Number(t.assigned_to))
+        assignee: matchEmployee(employees, t.assigned_to)
       }));
       res.json({ success: true, data, tasks: data });
     } catch (err) {
@@ -173,7 +177,7 @@ export const hrController = {
       const employees = await db.find('employees');
       const data = list.map(s => ({
         ...s,
-        agent: employees.find(e => Number(e.id) === Number(s.agent_id))
+        agent: matchEmployee(employees, s.agent_id)
       }));
       res.json({ success: true, data, sos: data });
     } catch (err) {

@@ -1,22 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, Users, Mail, Phone, MapPin, Building, Briefcase } from 'lucide-react';
+import { Search, Filter, Users, Mail, Phone, MapPin, Building, Briefcase, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
 
 export default function PublicStaffDirectoryView() {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('ALL');
 
-  useEffect(() => {
+  const loadEmployees = () => {
     setLoading(true);
     api.get('/hr/employees')
       .then(res => {
         const list = Array.isArray(res) ? res : (res.employees || res.data || []);
         setEmployees(list);
+        setLoadError('');
       })
-      .catch(() => {})
+      .catch(error => setLoadError(error.message || 'Staff directory could not be loaded.'))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadEmployees();
   }, []);
 
   const departments = ['ALL', ...new Set(employees.map(e => e.department).filter(Boolean))];
@@ -76,13 +82,22 @@ export default function PublicStaffDirectoryView() {
         </div>
       </div>
 
+      {loadError && !loading && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+          <span>Staff directory unavailable: {loadError}</span>
+          <button type="button" onClick={loadEmployees} className="inline-flex items-center gap-1 font-bold shrink-0" title="Retry loading staff">
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      )}
+
       {/* Directory Grid */}
       {loading ? (
         <div className="py-12 flex flex-col items-center justify-center space-y-2 text-zinc-400">
           <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-xs font-semibold">Loading directory...</span>
         </div>
-      ) : (
+      ) : loadError ? null : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {filteredEmployees.map(emp => (
             <div

@@ -3,105 +3,92 @@
 // Authoritative Identity Provisioning, Authentication, and Password Lifecycle
 // ==============================================================================
 
-import { supabase, supabaseAdmin } from '../config/database.js';
+import { supabase, supabaseAdmin, createSupabaseAuthClient } from '../config/database.js';
 import { logger } from '../utils/logger.js';
-
-const isTestMode = process.env.NODE_ENV === 'test' || Boolean(process.env.TEST_MODE);
+import { isTestMode } from '../utils/runtime.js';
 const CLIENT_URL = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'http://localhost:5173';
 
 export const supabaseAuthService = {
   /**
    * Provisions a real user in Supabase Auth (auth.users).
-   * Supports both Admin API (service role key) and Client API (publishable key).
+   * Strictly server-side via Supabase Admin API with Service Role Key.
    */
-  async provisionUser({ email, password, fullName, roleCode }) {
-    if (isTestMode || !email) return null;
+  async provisionUser({ email, password, fullName, roleCode, employeeCode }) {
+    if (isTestMode) {
+      return { authUserId: '00000000-0000-0000-0000-000000000001', user: { id: '00000000-0000-0000-0000-000000000001', email } };
+    }
+    if (!email) {
+      throw new Error('Email address is required for Supabase authentication.');
+    }
     const cleanEmail = email.toLowerCase().trim();
     const passwordToUse = (password && password.trim().length >= 6) ? password.trim() : 'ChangeMe123!';
 
-    // Pathway A: Privileged Admin API (Service Role Key)
-    if (supabaseAdmin?.auth?.admin) {
-      try {
-        const { data, error } = await supabaseAdmin.auth.admin.createUser({
-          email: cleanEmail,
-          password: passwordToUse,
-          email_confirm: true,
-          user_metadata: {
-            full_name: fullName || 'Staff Member',
-            role_code: roleCode || 'EMPLOYEE'
-          }
-        });
-
-        if (!error && data?.user) {
-          logger.info(`Supabase Auth: Admin provisioned user ${cleanEmail} (ID: ${data.user.id})`);
-          return { authUserId: data.user.id, user: data.user };
-        }
-
-        if (error && (error.message?.includes('already registered') || error.code === 'email_exists')) {
-          // Attempt to retrieve existing user ID via signIn or list
-          try {
-            const loginRes = await supabase.auth.signInWithPassword({ email: cleanEmail, password: passwordToUse });
-            if (loginRes.data?.user) {
-              return { authUserId: loginRes.data.user.id, user: loginRes.data.user };
-            }
-          } catch {}
-        }
-
-        if (error) {
-          logger.warn(`Supabase Auth Admin provisioning notice for ${cleanEmail}: ${error.message}`);
-        }
-      } catch (err) {
-        logger.warn(`Supabase Auth Admin provisioning error: ${err.message}`);
-      }
+    if (!supabaseAdmin?.auth?.admin) {
+      throw new Error('Supabase Admin client is not configured on the server. SUPABASE_SERVICE_ROLE_KEY is required.');
     }
 
-    // Pathway B: Standard Client API (Anon / Publishable Key)
-    if (supabase?.auth && typeof supabase.auth.signUp === 'function') {
-      try {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password: passwordToUse,
-          options: {
-            data: {
-              full_name: fullName || 'Staff Member',
-              role_code: roleCode || 'EMPLOYEE'
-            }
-          }
-        });
-
-        if (!error && data?.user) {
-          logger.info(`Supabase Auth: Client signed up user ${cleanEmail} (ID: ${data.user.id})`);
-          return { authUserId: data.user.id, user: data.user, session: data.session };
-        }
-
-        if (error && (error.message?.includes('already registered') || error.code === 'user_already_exists')) {
-          try {
-            const loginRes = await supabase.auth.signInWithPassword({ email: cleanEmail, password: passwordToUse });
-            if (loginRes.data?.user) {
-              return { authUserId: loginRes.data.user.id, user: loginRes.data.user, session: loginRes.data.session };
-            }
-          } catch {}
-        }
-
-        if (error) {
-          logger.warn(`Supabase Auth Client signUp notice for ${cleanEmail}: ${error.message}`);
-        }
-      } catch (err) {
-        logger.warn(`Supabase Auth Client signUp error: ${err.message}`);
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email: cleanEmail,
+      password: passwordToUse,
+      email_confirm: true,
+      user_metadata: {
+        full_name: fullName || 'Staff Member',
+        role_code: roleCode || 'EMPLOYEE',
+        employee_code: employeeCode || null
       }
+    });
+
+    if (error) {
+      if (error.message?.includes('already registered') || error.code === 'email_exists') {
+        // Attempt to find existing user
+        try {
+          const { data: listData } = await supabaseAdmin.auth.admin.listUsers();
+          const existing = listData?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
+          if (existing?.id) {
+            logger.info(`Supabase Auth: Matched existing user ${cleanEmail} (ID: ${existing.id})`);
+            return { authUserId: existing.id, user: existing, isExisting: true };
+          }
+        } catch {}
+        throw new Error(`Email address "${cleanEmail}" is already registered in Supabase Authentication.`);
+      }
+      logger.error(`Supabase Auth admin.createUser failed for ${cleanEmail}: ${error.message}`);
+      throw new Error(`Supabase Auth creation failed: ${error.message}`);
     }
 
-    return null;
+    if (!data?.user?.id) {
+      throw new Error('Supabase Auth did not return a valid user ID.');
+    }
+
+    logger.info(`Supabase Auth: Admin provisioned user ${cleanEmail} (ID: ${data.user.id})`);
+    return { authUserId: data.user.id, user: data.user, isExisting: false };
+  },
+
+  /**
+   * Deletes a user from Supabase Auth (used for atomic rollback).
+   */
+  async deleteUser(authUserId) {
+    if (isTestMode || !authUserId || !supabaseAdmin?.auth?.admin) return false;
+    try {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+      if (!error) {
+        logger.info(`Supabase Auth: Successfully rolled back user ${authUserId}`);
+        return true;
+      }
+      logger.warn(`Supabase Auth delete rollback note: ${error.message}`);
+    } catch (err) {
+      logger.warn(`Supabase Auth delete rollback error: ${err.message}`);
+    }
+    return false;
   },
 
   /**
    * Authenticates user against Supabase Auth using email and password.
    */
   async signIn({ email, password }) {
-    if (isTestMode || !supabase?.auth || !email || !password) return null;
+    if (isTestMode || !createSupabaseAuthClient || !email || !password) return null;
     try {
       const cleanEmail = email.toLowerCase().trim();
-      const res = await supabase.auth.signInWithPassword({
+      const res = await createSupabaseAuthClient().auth.signInWithPassword({
         email: cleanEmail,
         password
       });
@@ -115,11 +102,11 @@ export const supabaseAuthService = {
    * Sends an official Supabase password reset email.
    */
   async requestPasswordReset(email) {
-    if (isTestMode || !supabase?.auth || !email) return { error: new Error('Supabase not configured') };
+    if (isTestMode || !createSupabaseAuthClient || !email) return { error: new Error('Supabase not configured') };
     try {
       const cleanEmail = email.toLowerCase().trim();
       const redirectTo = `${CLIENT_URL}/#reset-password`;
-      const res = await supabase.auth.resetPasswordForEmail(cleanEmail, { redirectTo });
+      const res = await createSupabaseAuthClient().auth.resetPasswordForEmail(cleanEmail, { redirectTo });
       return res;
     } catch (err) {
       return { error: err };

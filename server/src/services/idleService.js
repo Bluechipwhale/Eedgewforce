@@ -8,6 +8,7 @@ import { db } from '../config/database.js';
 import { recordAudit } from '../middleware/auditLogger.js';
 import { emailService } from './emailService.js';
 import { logger } from '../utils/logger.js';
+import { employeeRef, findEmployeeByAnyId, findUserByAnyId, sameId, userRef } from '../utils/id.js';
 
 export const idleService = {
   /**
@@ -25,16 +26,18 @@ export const idleService = {
     } = data;
 
     const empId = employee_id || actor?.employee?.id || actor?.id;
-    const employee = empId ? await db.findById('employees', empId) : null;
-    const user = user_id ? await db.findById('users', user_id) : (employee?.user_id ? await db.findById('users', employee.user_id) : actor);
+    const employee = empId ? await findEmployeeByAnyId(db, empId) : null;
+    const user = user_id ? await findUserByAnyId(db, user_id) : (employee?.user_id ? await findUserByAnyId(db, employee.user_id) : actor);
+    const resolvedEmployeeId = employee ? employeeRef(employee) : null;
+    const resolvedUserId = user ? userRef(user) : null;
 
     const empName = employee ? `${employee.first_name} ${employee.last_name}` : (user?.full_name || 'Staff Member');
     const dept = employee?.department || 'Operations';
 
     const session = await db.insert('employee_idle_sessions', {
       company_id: Number(actor?.company_id || employee?.company_id || 1),
-      employee_id: employee?.id ? Number(employee.id) : null,
-      user_id: user?.id ? Number(user.id) : null,
+      employee_id: resolvedEmployeeId,
+      user_id: resolvedUserId,
       idle_started_at: started_at || new Date(Date.now() - 600000).toISOString(),
       detected_at: new Date().toISOString(),
       duration_seconds: Number(duration_seconds || 600),
@@ -49,7 +52,7 @@ export const idleService = {
 
     // Also populate legacy idle_alerts table for backward compatibility
     await db.insert('idle_alerts', {
-      employee_id: employee?.id ? Number(employee.id) : null,
+      employee_id: resolvedEmployeeId,
       started_at: session.idle_started_at,
       ended_at: new Date().toISOString(),
       duration_seconds: session.duration_seconds,
@@ -61,10 +64,10 @@ export const idleService = {
     // 1. Alert IT Administrators
     const itUsers = await db.find('users', { role_code: 'super_admin' });
     for (const it of itUsers) {
-      const itEmp = await db.findOne('employees', { user_id: it.id });
+      const itEmp = await db.findOne('employees', { user_id: userRef(it) }) || await db.findOne('employees', { user_id: it.id });
       if (itEmp?.id) {
         await db.insert('notifications', {
-          employee_id: itEmp.id,
+          employee_id: employeeRef(itEmp),
           company_id: session.company_id,
           type: 'System',
           title: `Workstation Inactivity Alert: ${empName}`,
@@ -80,10 +83,10 @@ export const idleService = {
     // 2. Alert HR Command Center
     const hrUsers = await db.find('users', { role_code: 'hr_manager' });
     for (const hr of hrUsers) {
-      const hrEmp = await db.findOne('employees', { user_id: hr.id });
+      const hrEmp = await db.findOne('employees', { user_id: userRef(hr) }) || await db.findOne('employees', { user_id: hr.id });
       if (hrEmp?.id) {
         await db.insert('notifications', {
-          employee_id: hrEmp.id,
+          employee_id: employeeRef(hrEmp),
           company_id: session.company_id,
           type: 'HR',
           title: `Employee Inactivity Log: ${empName}`,
@@ -112,8 +115,9 @@ export const idleService = {
     let session = await db.findById('employee_idle_sessions', sessionId);
     if (!session) {
       // Find latest pending session for this employee
-      const empId = actor?.employee?.id || actor?.id;
-      const list = await db.find('employee_idle_sessions', { employee_id: Number(empId) });
+      const employee = await findEmployeeByAnyId(db, actor?.employee?.id || actor?.id);
+      const empId = employee ? employeeRef(employee) : (actor?.employee?.id || actor?.id);
+      const list = await db.find('employee_idle_sessions', { employee_id: empId });
       session = list.find(s => s.status === 'pending') || list[list.length - 1];
     }
 
@@ -158,7 +162,7 @@ export const idleService = {
     const employees = await db.find('employees');
 
     return all.map(s => {
-      const emp = employees.find(e => Number(e.id) === Number(s.employee_id));
+      const emp = employees.find(e => sameId(employeeRef(e), s.employee_id) || sameId(e.id, s.employee_id));
       return {
         ...s,
         employee_name: emp ? `${emp.first_name} ${emp.last_name}` : 'Staff Member',

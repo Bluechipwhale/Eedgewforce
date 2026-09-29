@@ -8,6 +8,7 @@ import Modal from '../common/Modal';
 import CommandPalette from '../common/CommandPalette';
 import CompanyOnboardingWizard from '../admin/CompanyOnboardingWizard';
 import Customer360Modal from '../customers/Customer360Modal';
+import OperationalInsightsDrawer from '../ai/OperationalInsightsDrawer';
 import { Activity, Clock, CheckCircle2, RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { playNotificationChime } from '../../lib/sound';
@@ -33,6 +34,7 @@ export default function Shell({
   const [queuedCount, setQueuedCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncSuccessToast, setSyncSuccessToast] = useState('');
+  const [insightsOpen, setInsightsOpen] = useState(false);
 
 
   // Inactivity 10-Minute Idle Monitor State
@@ -251,6 +253,7 @@ export default function Shell({
         syncing={syncing}
         onLogout={onLogout}
         onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
+        onOpenInsights={() => setInsightsOpen(true)}
       />
 
 
@@ -429,6 +432,7 @@ export default function Shell({
           onClose={() => setCustomer360Id(null)}
         />
       )}
+      <OperationalInsightsDrawer isOpen={insightsOpen} onClose={() => setInsightsOpen(false)} />
     </div>
   );
 }

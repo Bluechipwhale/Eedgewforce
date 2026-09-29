@@ -14,6 +14,8 @@ router.use(requireAuth);
 router.get('/assignable-employees', taskController.getEmployees);
 router.post('/', taskController.createTask);
 router.get('/', taskController.getTasks);
+router.get('/:id/discussion', taskController.getDiscussion);
+router.post('/:id/discussion', taskController.addComment);
 router.get('/analytics', taskController.getAnalytics);
 router.post('/worker/cycle', taskController.runWorkerCycle);
 

@@ -11,8 +11,8 @@ import { recordAudit } from '../middleware/auditLogger.js';
 import { normalizePhone, normalizeEmail } from '../utils/phoneNormalizer.js';
 import { locationService } from './locationService.js';
 import { logger } from '../utils/logger.js';
-
-const isTestMode = process.env.NODE_ENV === 'test' || Boolean(process.env.TEST_MODE);
+import { employeeRef, findEmployeeByAnyId, sameId, toDbId, userRef } from '../utils/id.js';
+import { isTestMode } from '../utils/runtime.js';
 
 
 export const hrService = {
@@ -36,14 +36,14 @@ export const hrService = {
 
     const fullIdleRecords = await Promise.all(
       idleRecords.map(async (rec) => {
-        const emp = employees.find(e => Number(e.id) === Number(rec.employee_id));
+        const emp = employees.find(e => sameId(employeeRef(e), rec.employee_id) || sameId(e.id, rec.employee_id));
         return { ...rec, employee: emp };
       })
     );
 
     const fullPendingLeaves = await Promise.all(
       leaveRequests.map(async (req) => {
-        const emp = employees.find(e => Number(e.id) === Number(req.employee_id));
+        const emp = employees.find(e => sameId(employeeRef(e), req.employee_id) || sameId(e.id, req.employee_id));
         return { ...req, employee: emp };
       })
     );
@@ -96,7 +96,7 @@ export const hrService = {
     return employees.map(e => {
       const rank = ranks.find(r => r.code === e.rank_code);
       const department = departments.find(d => Number(d.id) === Number(e.department_id)) || { name: e.department };
-      const user = users.find(u => Number(u.id) === Number(e.user_id));
+      const user = users.find(u => sameId(userRef(u), e.user_id) || sameId(u.id, e.user_id));
 
       const sanitizedEmp = { ...e };
       
@@ -162,7 +162,7 @@ export const hrService = {
    * Updates an employee profile and rank with detailed audit logging.
    */
   async updateEmployee(employeeId, data, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found');
 
     const payload = {
@@ -234,7 +234,7 @@ export const hrService = {
    * Sets staff account status (active, suspended, deactivated).
    */
   async updateStaffStatus(employeeId, status, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found');
 
     const updatedEmp = await db.update('employees', employee.id, {
@@ -257,7 +257,7 @@ export const hrService = {
    * Removes a staff member from active access while preserving employee history.
    */
   async deleteEmployee(employeeId, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found');
 
     const protectedEmails = new Set([
@@ -267,11 +267,12 @@ export const hrService = {
       'hr@edgewforce.com'
     ]);
     const employeeEmail = String(employee.work_email || employee.personal_email || employee.email || '').toLowerCase();
-    if (protectedEmails.has(employeeEmail) || Number(employee.user_id) <= 9) {
+    const numericUserId = Number(employee.user_id);
+    if (protectedEmails.has(employeeEmail) || (Number.isFinite(numericUserId) && numericUserId <= 9)) {
       throw new Error('Protected system staff accounts cannot be deleted. Update their status instead.');
     }
 
-    const subordinates = await db.find('employees', { reporting_manager_id: Number(employeeId) });
+    const subordinates = (await db.find('employees')).filter(emp => sameId(emp.reporting_manager_id, employeeId));
     for (const subordinate of subordinates) {
       await db.update('employees', subordinate.id, { reporting_manager_id: employee.reporting_manager_id || null });
     }
@@ -304,7 +305,7 @@ export const hrService = {
    * Triggers onboarding invitation / reset flow.
    */
   async resendInvitation(employeeId, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found');
 
     const updatedEmp = await db.update('employees', employee.id, {
@@ -338,7 +339,7 @@ export const hrService = {
     if (!request) throw new Error('Leave request not found');
 
     const year = new Date(request.start_date).getFullYear();
-    const balance = await db.findOne('leave_balances', { employee_id: Number(request.employee_id), year });
+    const balance = await db.findOne('leave_balances', { employee_id: toDbId(request.employee_id), year });
     const balanceKey = request.leave_type.toLowerCase();
 
     if (balance && balance[balanceKey] !== undefined) {
@@ -348,7 +349,7 @@ export const hrService = {
 
     const updated = await db.update('leave_requests', request.id, {
       status: 'approved',
-      reviewed_by: actor?.employee?.id || actor?.id,
+      reviewed_by: actor?.employee ? employeeRef(actor.employee) : (actor?.employee_id || null),
       reviewed_at: new Date().toISOString()
     });
 
@@ -373,7 +374,7 @@ export const hrService = {
 
     const updated = await db.update('leave_requests', request.id, {
       status: 'rejected',
-      reviewed_by: actor?.employee?.id || actor?.id,
+      reviewed_by: actor?.employee ? employeeRef(actor.employee) : (actor?.employee_id || null),
       reviewed_at: new Date().toISOString(),
       review_notes: reason
     });
@@ -400,7 +401,7 @@ export const hrService = {
       throw new Error('Task title and assignee are required.');
     }
 
-    const targetEmployee = await db.findById('employees', assigned_to);
+    const targetEmployee = await findEmployeeByAnyId(db, assigned_to);
     if (!targetEmployee) throw new Error('Selected employee does not exist.');
 
     // Enforce organizational authority hierarchy
@@ -416,8 +417,8 @@ export const hrService = {
     const task = await db.insert('tasks', {
       title,
       description: description || '',
-      assigned_to: Number(assigned_to),
-      assigned_by: Number(assignerUser.id),
+      assigned_to: employeeRef(targetEmployee),
+      assigned_by: userRef(assignerUser) || assignerUser.id,
       department: department || targetEmployee.department,
       priority: priority || 'Normal',
       due_date: due_date || null,
@@ -427,7 +428,7 @@ export const hrService = {
 
     // Notify assignee
     await db.insert('notifications', {
-      employee_id: targetEmployee.id,
+      employee_id: employeeRef(targetEmployee),
       type: 'Tasks',
       title: 'New Task Assigned',
       body: `You have been assigned: "${title}" by ${assignerUser.full_name}. Priority: ${priority || 'Normal'}.`
@@ -443,7 +444,7 @@ export const hrService = {
   async acknowledgeSOS(sosId, actor = null, req = null) {
     const updated = await db.update('sos', sosId, {
       status: 'acknowledged',
-      acknowledged_by: Number(actor?.id || 1),
+      acknowledged_by: userRef(actor) || actor?.id || null,
       acknowledged_at: new Date().toISOString()
     });
     await recordAudit(actor, 'SOS_ACKNOWLEDGED', 'sos', sosId, {}, req);
@@ -453,7 +454,7 @@ export const hrService = {
   async resolveSOS(sosId, resolutionNotes = '', actor = null, req = null) {
     const updated = await db.update('sos', sosId, {
       status: 'resolved',
-      resolved_by: Number(actor?.id || 1),
+      resolved_by: userRef(actor) || actor?.id || null,
       resolved_at: new Date().toISOString(),
       resolution_notes: resolutionNotes
     });
@@ -501,9 +502,9 @@ export const hrService = {
 
     const fullStaff = employees.map(e => {
       const rank = ranks.find(r => r.code === e.rank_code) || { name: 'Staff', level: 8, code: e.rank_code || 'STAFF' };
-      const user = users.find(u => Number(u.id) === Number(e.user_id));
-      const manager = employees.find(m => Number(m.id) === Number(e.reporting_manager_id));
-      const directReports = employees.filter(sub => Number(sub.reporting_manager_id) === Number(e.id));
+      const user = users.find(u => sameId(userRef(u), e.user_id) || sameId(u.id, e.user_id));
+      const manager = employees.find(m => sameId(employeeRef(m), e.reporting_manager_id) || sameId(m.id, e.reporting_manager_id));
+      const directReports = employees.filter(sub => sameId(sub.reporting_manager_id, employeeRef(e)) || sameId(sub.reporting_manager_id, e.id));
       return {
         ...e,
         rank,
@@ -551,12 +552,12 @@ export const hrService = {
    * Reassigns an organization node / staff member to a new manager, department, or rank level.
    */
   async reassignOrganizationNode(employeeId, data, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Organization node / Employee not found');
 
     const updateFields = {};
     if (data.reporting_manager_id !== undefined) {
-      updateFields.reporting_manager_id = data.reporting_manager_id ? Number(data.reporting_manager_id) : null;
+      updateFields.reporting_manager_id = data.reporting_manager_id ? toDbId(data.reporting_manager_id) : null;
     }
     if (data.department) {
       updateFields.department = data.department;
@@ -584,11 +585,11 @@ export const hrService = {
    * Deactivates / removes an employee from the active organization chart.
    */
   async deleteOrganizationNode(employeeId, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found');
 
     // Check if employee has direct subordinates; if so, reassign their manager to null or superior
-    const subordinates = await db.find('employees', { reporting_manager_id: Number(employeeId) });
+    const subordinates = (await db.find('employees')).filter(emp => sameId(emp.reporting_manager_id, employeeId));
     for (const sub of subordinates) {
       await db.update('employees', sub.id, { reporting_manager_id: employee.reporting_manager_id || null });
     }
@@ -667,36 +668,6 @@ export const hrService = {
       : 'ChangeMe123!';
     const passwordHash = bcrypt.hashSync(passwordToUse, 10);
 
-    let authUserId = null;
-
-    // 1. Provision Real Supabase Auth User (Admin API or Client API)
-    if (!isTestMode && normalizedEmail) {
-      try {
-        const sbResult = await supabaseAuthService.provisionUser({
-          email: normalizedEmail,
-          password: passwordToUse,
-          fullName: `${first_name} ${last_name}`,
-          roleCode: finalRole
-        });
-        if (sbResult?.authUserId) {
-          authUserId = sbResult.authUserId;
-        }
-      } catch (err) {
-        logger.warn(`Supabase HR account provisioning notice: ${err.message}`);
-      }
-    }
-
-    const user = await db.insert('users', {
-      auth_user_id: authUserId,
-      uuid: authUserId || undefined,
-      full_name: `${first_name} ${last_name}`,
-      email: normalizedEmail,
-      phone: normalizedPhone,
-      password_hash: passwordHash,
-      role_code: finalRole,
-      status: 'active'
-    });
-
     const allEmps = await db.find('employees');
     const maxCode = allEmps.reduce((max, e) => {
       const num = parseInt(String(e.employee_code || '').replace(/\D/g, ''), 10);
@@ -705,43 +676,96 @@ export const hrService = {
     const nextNum = Math.max(allEmps.length + 1001, maxCode + 1);
     const employee_code = staffData.employee_code || (staffData.staff_id ? `EMP-${staffData.staff_id}` : `EMP-${nextNum}`);
 
-    const employee = await db.insert('employees', {
-      company_id: Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1),
-      user_id: user.id,
-      auth_user_id: authUserId,
-      employee_code,
-      first_name,
-      last_name,
-      full_name: `${first_name} ${last_name}`,
-      email: normalizedEmail,
-      work_email: normalizedEmail,
-      phone: normalizedPhone,
-      department_id: Number(department_id || 1),
-      department: department || 'Commercial Sales',
-      position: position || 'Operations Officer',
-      territory: territory || 'Headquarters',
-      work_location: staffData.work_location || territory || 'Headquarters',
-      state: staffData.state || 'Lagos',
-      lga: staffData.lga || '',
-      city: staffData.city || '',
-      rank_code,
-      base_salary: Number(base_salary || 0),
-      housing_allowance: Number(housing_allowance || 0),
-      transport_allowance: Number(transport_allowance || 0),
-      other_allowance: Number(other_allowance || 0),
-      date_of_birth: date_of_birth || '1995-01-01',
-      address,
-      status: 'active'
-    });
+    let authUserId = null;
 
-    // Also initialize leave balances
-    await db.insert('leave_balances', {
-      employee_id: employee.id,
-      year: 2026,
-      annual: 20,
-      sick: 12,
-      casual: 5
-    });
+    // 1. Provision Real Supabase Auth User (Admin API with Service Role Key)
+    if (!isTestMode) {
+      if (!normalizedEmail) {
+        throw new Error('A valid corporate email address is required to create a Supabase Auth user.');
+      }
+      const sbResult = await supabaseAuthService.provisionUser({
+        email: normalizedEmail,
+        password: passwordToUse,
+        fullName: `${first_name} ${last_name}`,
+        roleCode: finalRole,
+        employeeCode: employee_code
+      });
+      if (!sbResult?.authUserId) {
+        throw new Error('Failed to create user in Supabase Authentication.');
+      }
+      authUserId = sbResult.authUserId;
+    } else {
+      authUserId = '00000000-0000-0000-0000-' + String(Date.now()).slice(-12);
+    }
+
+    // 2. Transactionally Insert Employee Record with authUserId as primary key
+    let employee = null;
+    try {
+      employee = await db.insert('employees', {
+        id: authUserId,
+        user_id: authUserId,
+        auth_user_id: authUserId,
+        company_id: Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1),
+        employee_code,
+        first_name,
+        last_name,
+        full_name: `${first_name} ${last_name}`,
+        email: normalizedEmail,
+        work_email: normalizedEmail,
+        phone: normalizedPhone,
+        department: department || 'Commercial Sales',
+        job_title: position || 'Operations Officer',
+        position: position || 'Operations Officer',
+        rank_code,
+        work_location: staffData.work_location || territory || 'Headquarters',
+        address: address || '15 Atiba Osborne, Mende, Maryland, Lagos',
+        city_lga: staffData.city || staffData.lga || 'Lagos',
+        state_of_residence: staffData.state || 'Lagos',
+        base_salary: Number(base_salary || 0),
+        status: 'active',
+        onboarding_status: 'Active',
+        requires_password_change: false
+      });
+    } catch (empErr) {
+      // Atomic rollback: Delete created Supabase Auth user if database insert failed
+      if (authUserId && !isTestMode) {
+        await supabaseAuthService.deleteUser(authUserId);
+      }
+      logger.error(`Failed to create employee profile in Supabase: ${empErr.message}`);
+      throw new Error(`Failed to save employee profile: ${empErr.message}`);
+    }
+
+    // 3. Upsert user account for legacy/relational lookup
+    let user = null;
+    try {
+      user = await db.insert('users', {
+        uuid: authUserId,
+        auth_user_id: authUserId,
+        company_id: Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1),
+        full_name: `${first_name} ${last_name}`,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        password_hash: passwordHash,
+        role_code: finalRole,
+        status: 'active',
+        requires_password_change: false
+      });
+    } catch (userErr) {
+      logger.warn(`users table sync note: ${userErr.message}`);
+    }
+
+    // 4. Initialize leave balances
+    try {
+      await db.insert('leave_balances', {
+        employee_id: employeeRef(employee),
+        year: new Date().getFullYear(),
+        annual: 20,
+        sick: 12,
+        casual: 5
+      });
+    } catch (lvErr) {
+      logger.warn(`leave_balances initialization note: ${lvErr.message}`);
+    }
 
     // Assign initial work location if provided
     let locationAssignment = null;
@@ -750,8 +774,8 @@ export const hrService = {
       try {
         locationAssignment = await locationService.assignEmployeeLocation({
           company_id: employee.company_id,
-          employee_id: employee.id,
-          location_id: Number(locIdToAssign),
+          employee_id: employeeRef(employee),
+          location_id: locIdToAssign,
           assignment_type: staffData.assignment_type || 'primary',
           is_primary: true,
           reason: 'Initial assignment upon staff registration'
@@ -909,7 +933,7 @@ export const hrService = {
    * Updates an employee's birthday or milestone record.
    */
   async updateStaffBirthday(employeeId, data, actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found.');
 
     const updated = await db.update('employees', employee.id, {
@@ -925,7 +949,7 @@ export const hrService = {
    * Broadcasts a birthday celebration notice to the entire company staff portal.
    */
   async broadcastBirthday(employeeId, customWish = '', actor = null, req = null) {
-    const employee = await db.findById('employees', employeeId);
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee not found.');
 
     const wishText = customWish || `Happy Birthday to our fantastic team member, ${employee.first_name} ${employee.last_name} (${employee.position}, ${employee.department})! Wishing you another year of outstanding success and prosperity with EdgeWForce! 🎉🎂`;
@@ -944,13 +968,13 @@ export const hrService = {
 
     // Also send an instant congratulatory notification directly to employee
     await db.insert('notifications', {
-      employee_id: employee.id,
+      employee_id: employeeRef(employee),
       type: 'General',
       title: '🎉 Happy Birthday from the Entire Team!',
       body: 'Management and the entire workforce celebrate you today! Thank you for your dedication and excellence.'
     });
 
-    await recordAudit(actor, 'BIRTHDAY_BROADCAST_PUBLISHED', 'announcements', announcement.id, { employee_id: employee.id }, req);
+    await recordAudit(actor, 'BIRTHDAY_BROADCAST_PUBLISHED', 'announcements', announcement.id, { employee_id: employeeRef(employee) }, req);
     return announcement;
   }
 };

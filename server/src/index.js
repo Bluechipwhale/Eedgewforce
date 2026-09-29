@@ -36,6 +36,7 @@ import { employeeService } from './services/employeeService.js';
 import { reminderWorker } from './services/reminderWorker.js';
 import { staffImportService } from './services/staffImportService.js';
 import { logger } from './utils/logger.js';
+import { supabase } from './config/database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
@@ -50,6 +51,10 @@ try {
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const isProduction = process.env.NODE_ENV === 'production';
+if (isProduction && !process.env.CLIENT_URL) {
+  throw new Error('CLIENT_URL must list the allowed production frontend origin(s).');
+}
 
 // 1. Security & Headers
 app.use(helmet({
@@ -67,13 +72,16 @@ app.use(helmet({
   }
 }));
 
-const allowedOrigins = CLIENT_URL.split(',').map(x => x.trim()).concat(['http://localhost:5173', 'http://127.0.0.1:5173']);
+const allowedOrigins = CLIENT_URL.split(',').map(x => x.trim()).filter(origin =>
+  origin && (!isProduction || !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/i.test(origin))
+);
+if (!isProduction) allowedOrigins.push('http://localhost:5173', 'http://127.0.0.1:5173');
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://localhost:')) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(null, true); // Allow during testing
+      callback(new Error('Origin is not allowed by CORS.'));
     }
   },
   credentials: true
@@ -95,13 +103,31 @@ const generalLimiter = rateLimit({
 app.use('/api', generalLimiter);
 
 // 4. Health Check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'EDGEWFORCE Enterprise Backend',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    if (!supabase) {
+      if (isProduction) throw new Error('Production Supabase client is unavailable.');
+      return res.json({ status: 'healthy', database: 'local', service: 'EDGEWFORCE Enterprise Backend', version: '1.0.0', timestamp: new Date().toISOString() });
+    }
+
+    const { error: companyError } = await supabase.from('companies').select('id', { head: true }).limit(1);
+    if (companyError) throw companyError;
+
+    const { error: uuidColumnError } = await supabase.from('employees').select('uuid').limit(0);
+    if (uuidColumnError) throw new Error('Supabase migrations 011 and 012 are required: employees.uuid is missing or inaccessible.');
+
+    const { error: assignmentTypeError } = await supabase
+      .from('employee_location_assignments')
+      .select('id')
+      .eq('employee_id', '00000000-0000-4000-8000-000000000000')
+      .limit(0);
+    if (assignmentTypeError) throw new Error('Supabase migrations 011 and 012 are required: employee_location_assignments.employee_id must be UUID.');
+
+    res.json({ status: 'healthy', database: 'supabase', service: 'EDGEWFORCE Enterprise Backend', version: '1.0.0', timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('Readiness check failed', error);
+    res.status(503).json({ status: 'not_ready', database: 'unavailable_or_unmigrated', service: 'EDGEWFORCE Enterprise Backend', version: '1.0.0' });
+  }
 });
 
 // 5. Mount API Routes
@@ -177,10 +203,19 @@ if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
   app.listen(PORT, () => {
     logger.info(`EdgeWForce Backend Server operational on port ${PORT}`);
     logger.info(`API Base URL: http://localhost:${PORT}/api`);
-    reminderWorker.start(15000);
-    staffImportService.importAuthoritativeStaff().catch(err => {
-      logger.warn(`Staff sync note: ${err.message}`);
-    });
+    if (supabase) {
+      supabase.from('task_reminders').select('id').limit(0).then(({ error }) => {
+        if (error) logger.warn('Reminder worker requires the database migrations. Restart the backend after applying them.');
+        else reminderWorker.start(15000);
+      }).catch(() => logger.warn('Reminder worker could not connect to Supabase.'));
+    } else {
+      reminderWorker.start(15000);
+    }
+    if (!supabase) {
+      staffImportService.importAuthoritativeStaff().catch(err => {
+        logger.warn(`Staff sync note: ${err.message}`);
+      });
+    }
   });
 }
 

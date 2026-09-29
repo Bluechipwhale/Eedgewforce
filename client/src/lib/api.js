@@ -21,6 +21,7 @@ function getAuthToken() {
 }
 
 export async function request(path, options = {}) {
+  const { fresh = false, ...fetchOptions } = options;
   const method = options.method || 'GET';
   const token = getAuthToken();
   const isFormData = options.body instanceof FormData;
@@ -35,7 +36,7 @@ export async function request(path, options = {}) {
   const isAuthenticationRequest = path.startsWith('/auth/');
 
   // If completely offline and this is a GET request, serve directly from cache
-  if (!navigator.onLine && method === 'GET') {
+  if (!fresh && !navigator.onLine && method === 'GET') {
     const cached = await getCachedApiResponse(path);
     if (cached !== null && cached !== undefined) {
       return cached;
@@ -67,7 +68,7 @@ export async function request(path, options = {}) {
 
   try {
     const res = await fetch(url, {
-      ...options,
+      ...fetchOptions,
       headers
     });
 
@@ -80,11 +81,9 @@ export async function request(path, options = {}) {
     }
 
     if (!res.ok) {
-      if (res.status === 401 && !path.includes('/auth/login') && !path.includes('/auth/me')) {
-        if (json.error?.code === 'TOKEN_EXPIRED' || json.error?.code === 'USER_INACTIVE') {
-          localStorage.removeItem('ewf_token');
-          window.dispatchEvent(new CustomEvent('ewf_unauthorized'));
-        }
+      if (res.status === 401 && !path.includes('/auth/login')) {
+        localStorage.removeItem('ewf_token');
+        window.dispatchEvent(new CustomEvent('ewf_unauthorized'));
       }
       const errorMsg = json.error?.message || json.message || `Request failed with status ${res.status}`;
       const err = new Error(errorMsg);
@@ -96,14 +95,14 @@ export async function request(path, options = {}) {
     const data = json.data !== undefined ? json.data : json;
 
     // Cache successful GET responses for offline resilience
-    if (method === 'GET') {
+    if (method === 'GET' && !fresh) {
       cacheApiResponse(path, data);
     }
 
     return data;
   } catch (err) {
     // If network failure during GET, attempt cache fallback
-    if (method === 'GET') {
+    if (method === 'GET' && !fresh && !err.status) {
       const cached = await getCachedApiResponse(path);
       if (cached !== null && cached !== undefined) {
         return cached;

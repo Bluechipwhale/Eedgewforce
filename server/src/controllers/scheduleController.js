@@ -5,11 +5,14 @@
 
 import { scheduleService } from '../services/scheduleService.js';
 import { db } from '../config/database.js';
+import { employeeRef, userRef } from '../utils/id.js';
 
 async function resolveEmployeeId(req) {
-  if (req.user?.employee?.id) return req.user.employee.id;
-  const emp = await db.findOne('employees', { user_id: req.user.id });
-  if (emp) return emp.id;
+  if (req.user?.employee) return employeeRef(req.user.employee);
+  const userId = userRef(req.user) || req.user.id;
+  const emp = await db.findOne('employees', { user_id: userId }) ||
+    await db.findOne('employees', { user_id: req.user.id });
+  if (emp) return employeeRef(emp);
   return req.user.id;
 }
 

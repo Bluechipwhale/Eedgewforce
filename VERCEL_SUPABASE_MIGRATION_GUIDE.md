@@ -66,11 +66,14 @@ ode_modules, client/dist, logs, and temporary files are never exposed to GitHub.
 ### B. Run Schema & Seed SQL
 1. In the Supabase Dashboard left menu, click **SQL Editor**.
 2. Click **New query**.
-3. Open the file supabase/schema.sql from this codebase, copy all contents, paste into the SQL Editor, and click **Run**.
-   - *This creates all 24+ tables, primary/foreign keys, indexes, Row Level Security (RLS) tenant isolation policies, and initializes the edgewforce-media storage bucket.*
-4. Run the migrations in this order: `001_initial_schema.sql`, `002_security_rls.sql`, `003_audit_triggers.sql`, `004_work_locations_and_assignments.sql`, `005_staff_hr_management_and_rls.sql`, `006_authoritative_staff_seed.sql`, `007_supabase_auth_integration.sql`, `008_registration_persistence.sql`, `009_production_auth_model_alignment.sql`, and `010_security_and_location_policy_hardening.sql`.
-   - *Migration 006 is the important production sync: it currently contains all 68 users and 68 employee records from the offline store and is safe to rerun because it upserts by ID.*
-5. Do not rely on `supabase/seed.sql` alone for production staff data. It contains only the small demo dataset; migration 006 is the authoritative staff seed.
+3. For a **new, empty project**, run `supabase/migrations/001_initial_schema.sql` through `014_application_runtime_schema.sql` in numeric order. Do not run `supabase/schema.sql` first; it is an alternate schema with incompatible employee ID types.
+   - Alternatively, run `supabase/migrations/all.sql` once on an empty project. Do not run the bundle and the individual files together.
+   - Migration 006 seeds the authoritative staff records. Do not rerun it on an existing production database without reviewing conflicts and taking a backup.
+   - Migration 013 deletes the two retired sample workplaces and their assignment/history rows. Review that data effect before applying it to any database containing real assignments.
+   - Migrations 011-012 retain legacy numeric primary keys while moving application-facing user/staff references to UUIDs. Migration 014 adds backend runtime tables and restricts media uploads to authenticated users.
+4. For an **existing Supabase project**, do not run `all.sql` or replay the full list. Back up the database, inspect the live schema, and apply only migrations that have not already been applied.
+   Set `SUPABASE_SCHEMA_VARIANT=numbered` for this migration chain and `DATABASE_MODE=supabase` to prevent failed cloud queries from using local sample data. The browser's public settings belong in `client/.env.local`; keep server secrets in the root/server private environment files.
+5. Do not rely on `supabase/seed.sql` alone for production staff data. It contains only the small demo dataset; migration 006 is the authoritative staff seed for a fresh install.
 6. Verify the online staff count in the SQL Editor:
    ```sql
    SELECT COUNT(*) AS users FROM public.users;
@@ -128,8 +131,8 @@ pm --workspace client run build (or leave default from ercel.json)
 | :--- | :--- | :--- |
 | NODE_ENV | production | Production mode |
 | CLIENT_URL | https://your-custom-domain.com | Allowed CORS origins |
-| JWT_SECRET | *(Your private production JWT secret)* | JWT session token signing; set this to the Supabase JWT secret when using Supabase-issued sessions |
-| SUPABASE_JWT_SECRET | *(Optional alias for JWT_SECRET)* | Supported fallback for the Supabase JWT secret; never expose it in Vite/client variables |
+| JWT_SECRET | *(A random, private application session secret)* | Signs application-issued sessions. Supabase-issued sessions are verified through Supabase Auth, including ES256 signing keys. A signing key ID is not a secret. |
+| SUPABASE_JWT_SECRET | *(Leave empty when JWT_SECRET is configured)* | Legacy fallback alias; never expose it in Vite/client variables |
 | SUPABASE_URL | https://<your-project-ref>.supabase.co | Supabase endpoint |
 | SUPABASE_ANON_KEY | *(Your Supabase anon key)* | Supabase public key |
 | SUPABASE_SERVICE_ROLE_KEY | `sb_secret_...` from this same Supabase project | **Required by the Vercel API for registration and database writes; never expose it in Vite/client variables. Verify it is accepted by the project before deploying.** |

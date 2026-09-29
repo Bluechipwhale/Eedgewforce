@@ -4,7 +4,7 @@
 
 import { accountingService } from '../services/accountingService.js';
 import { executiveService } from '../services/executiveService.js';
-import { aiService } from '../services/aiService.js';
+import { insightService } from '../services/insightService.js';
 import { notificationService } from '../services/notificationService.js';
 import { storageService } from '../services/storageService.js';
 
@@ -95,14 +95,23 @@ export const executiveController = {
 };
 
 export const aiController = {
+  async getBriefing(req, res) {
+    try {
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, data: await insightService.getBriefing(req.user) });
+    } catch {
+      res.status(500).json({ success: false, error: { message: 'Unable to load the operational briefing.' } });
+    }
+  },
   async askCopilot(req, res) {
     try {
-      const { prompt, customer_id, cart } = req.body;
-      if (!prompt) {
+      const { prompt, customer_id } = req.body;
+      if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 2000) {
         return res.status(400).json({ success: false, error: { message: 'Prompt query is required.' } });
       }
-      const guidance = await aiService.generateSalesGuidance(prompt, { customerId: customer_id, currentCart: cart });
-      res.json({ success: true, data: { guidance }, guidance });
+      const result = await insightService.ask(prompt.trim(), req.user, { customerId: customer_id });
+      res.set('Cache-Control', 'no-store');
+      res.json({ success: true, data: result, guidance: result.guidance });
     } catch (err) {
       res.status(500).json({ success: false, error: { message: err.message } });
     }

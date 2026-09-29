@@ -1,6 +1,10 @@
 -- ==============================================================================
 -- EDGEWFORCE — CANONICAL DATABASE SCHEMA, INDEXES, FUNCTIONS & RLS POLICIES
 -- Production-Ready Multi-Tenant Enterprise Field-Force & Workforce Operating System
+-- LEGACY ALTERNATE: Do not combine this file with supabase/migrations/*.sql.
+-- It defines UUID employee primary keys, while the versioned migration chain
+-- preserves legacy numeric employee IDs and adds UUID references alongside them.
+-- For a new database, use supabase/migrations/all.sql instead.
 -- ==============================================================================
 
 -- 1. EXTENSIONS

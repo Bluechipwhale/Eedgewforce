@@ -7,6 +7,7 @@ import { db } from '../config/database.js';
 import { notificationService } from './notificationService.js';
 import { recordAudit } from '../middleware/auditLogger.js';
 import { logger } from '../utils/logger.js';
+import { employeeRef, findEmployeeByAnyId, sameId, toDbId } from '../utils/id.js';
 
 export const scheduleService = {
   /**
@@ -30,7 +31,9 @@ export const scheduleService = {
    * Retrieves schedules for the authenticated employee.
    */
   async getEmployeeSchedules(employeeId, filters = {}) {
-    let schedules = await db.find('schedules', { employee_id: Number(employeeId) }, { order: { column: 'date', ascending: false } });
+    const employee = await findEmployeeByAnyId(db, employeeId);
+    const empId = employee ? employeeRef(employee) : toDbId(employeeId);
+    let schedules = await db.find('schedules', { employee_id: empId }, { order: { column: 'date', ascending: false } });
 
     if (filters.date) {
       schedules = schedules.filter(s => s.date === filters.date);
@@ -50,7 +53,9 @@ export const scheduleService = {
    */
   async getTodaySchedule(employeeId) {
     const todayStr = new Date().toISOString().slice(0, 10);
-    const schedules = await db.find('schedules', { employee_id: Number(employeeId) });
+    const employee = await findEmployeeByAnyId(db, employeeId);
+    const empId = employee ? employeeRef(employee) : toDbId(employeeId);
+    const schedules = await db.find('schedules', { employee_id: empId });
     const todaySchedule = schedules.find(s => s.date === todayStr);
     return todaySchedule || null;
   },
@@ -59,18 +64,19 @@ export const scheduleService = {
    * Creates or updates a daily schedule submitted by an employee.
    */
   async createOrUpdateSchedule(employeeId, scheduleData, req = null) {
-    const employee = await db.findById('employees', Number(employeeId));
+    const employee = await findEmployeeByAnyId(db, employeeId);
     if (!employee) throw new Error('Employee profile not found.');
+    const empId = employeeRef(employee);
 
     const date = scheduleData.date || new Date().toISOString().slice(0, 10);
-    const existing = await db.findOne('schedules', { employee_id: Number(employeeId), date });
+    const existing = await db.findOne('schedules', { employee_id: empId, date });
 
     // Determine Supervisor
     let supervisorId = employee.supervisor_id;
     let supervisorName = 'Assigned Supervisor';
 
     if (supervisorId) {
-      const sup = await db.findById('employees', Number(supervisorId));
+      const sup = await findEmployeeByAnyId(db, supervisorId);
       if (sup) supervisorName = `${sup.first_name} ${sup.last_name}`;
     } else {
       // Fallback to default field/operations supervisor
@@ -103,7 +109,7 @@ export const scheduleService = {
 
     const schedulePayload = {
       company_id: employee.company_id || 1,
-      employee_id: Number(employee.id),
+      employee_id: empId,
       employee_name: `${employee.first_name} ${employee.last_name}`,
       employee_code: employee.employee_code,
       department: employee.department || 'Operations',
@@ -118,7 +124,7 @@ export const scheduleService = {
       notes: scheduleData.notes || '',
       status: submissionStatus,
       submitted_at: isDraft ? null : new Date().toISOString(),
-      supervisor_id: supervisorId ? Number(supervisorId) : null,
+      supervisor_id: supervisorId ? toDbId(supervisorId) : null,
       supervisor_name: supervisorName,
       supervisor_status: isDraft ? 'DRAFT' : 'PENDING',
       supervisor_reviewed_at: null,
@@ -157,7 +163,7 @@ export const scheduleService = {
         const hrEmployees = await db.find('employees');
         const hrStaff = hrEmployees.filter(e => e.rank_code === 'HR' || e.department === 'Human Resources');
         for (const hr of hrStaff) {
-          if (hr.id !== Number(employeeId)) {
+          if (!sameId(employeeRef(hr), empId) && !sameId(hr.id, employeeId)) {
             await notificationService.notify(
               hr.id,
               'Schedule',
@@ -173,7 +179,7 @@ export const scheduleService = {
 
       if (req) {
         await recordAudit(req, 'SUBMIT_DAILY_SCHEDULE', 'schedules', result.id, {
-          employee_id: employee.id,
+          employee_id: employeeRef(employee),
           date,
           tasks_count: tasks.length
         });
@@ -187,9 +193,11 @@ export const scheduleService = {
    * Updates a single task item status within today's or specified schedule (e.g. Planned -> Completed).
    */
   async updateTaskItemStatus(scheduleId, employeeId, taskId, taskStatus) {
-    const schedule = await db.findById('schedules', Number(scheduleId));
+    const schedule = await db.findById('schedules', toDbId(scheduleId));
     if (!schedule) throw new Error('Schedule not found.');
-    if (schedule.employee_id !== Number(employeeId)) throw new Error('Unauthorized schedule modification.');
+    const employee = await findEmployeeByAnyId(db, employeeId);
+    const empId = employee ? employeeRef(employee) : toDbId(employeeId);
+    if (!sameId(schedule.employee_id, empId)) throw new Error('Unauthorized schedule modification.');
 
     const updatedTasks = (schedule.tasks || []).map(t => {
       if (t.id === taskId) {
@@ -213,20 +221,20 @@ export const scheduleService = {
     if (isGlobalManager) {
       teamEmployees = employees;
     } else {
-      teamEmployees = employees.filter(e => String(e.supervisor_id) === String(supervisorId) || String(e.id) === String(supervisorId));
+      teamEmployees = employees.filter(e => sameId(e.supervisor_id, supervisorId) || sameId(employeeRef(e), supervisorId) || sameId(e.id, supervisorId));
       if (teamEmployees.length === 0) {
         // If supervisor has no explicit supervisor_id links, include employees in same territory/department or field staff
-        const sup = await db.findById('employees', Number(supervisorId));
+        const sup = await findEmployeeByAnyId(db, supervisorId);
         if (sup) {
           teamEmployees = employees.filter(e => e.department === sup.department || ['Commercial Sales', 'Field Operations'].includes(e.department));
         }
       }
     }
 
-    const teamIds = teamEmployees.map(e => e.id);
+    const teamIds = teamEmployees.map(e => employeeRef(e));
     let allSchedules = await db.find('schedules', {}, { order: { column: 'date', ascending: false } });
 
-    let filtered = allSchedules.filter(s => teamIds.includes(Number(s.employee_id)));
+    let filtered = allSchedules.filter(s => teamIds.some(id => sameId(id, s.employee_id)));
 
     const targetDate = filters.date || new Date().toISOString().slice(0, 10);
     if (filters.date) {
@@ -236,7 +244,7 @@ export const scheduleService = {
       filtered = filtered.filter(s => s.supervisor_status === filters.status || s.status === filters.status);
     }
     if (filters.employee_id) {
-      filtered = filtered.filter(s => Number(s.employee_id) === Number(filters.employee_id));
+      filtered = filtered.filter(s => sameId(s.employee_id, filters.employee_id));
     }
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -249,7 +257,7 @@ export const scheduleService = {
     }
 
     // Compute team submission metrics for target date
-    const targetDateSchedules = allSchedules.filter(s => s.date === targetDate && teamIds.includes(Number(s.employee_id)));
+    const targetDateSchedules = allSchedules.filter(s => s.date === targetDate && teamIds.some(id => sameId(id, s.employee_id)));
     const submittedCount = targetDateSchedules.filter(s => s.status !== 'DRAFT').length;
     const pendingReviewCount = targetDateSchedules.filter(s => s.supervisor_status === 'PENDING').length;
     const approvedCount = targetDateSchedules.filter(s => s.supervisor_status === 'APPROVED').length;
@@ -273,7 +281,7 @@ export const scheduleService = {
    * Supervisor reviews and approves or rejects / requests revision for a schedule.
    */
   async reviewSupervisorSchedule(scheduleId, supervisorId, reviewData, req = null) {
-    const schedule = await db.findById('schedules', Number(scheduleId));
+    const schedule = await db.findById('schedules', toDbId(scheduleId));
     if (!schedule) throw new Error('Schedule record not found.');
 
     const status = reviewData.status; // 'APPROVED' | 'REJECTED' | 'REVISION_REQUESTED'
@@ -281,7 +289,7 @@ export const scheduleService = {
       throw new Error('Invalid review status. Must be APPROVED, REJECTED, or REVISION_REQUESTED.');
     }
 
-    const sup = await db.findById('employees', Number(supervisorId));
+    const sup = await findEmployeeByAnyId(db, supervisorId);
     const supervisorName = sup ? `${sup.first_name} ${sup.last_name}` : 'Field Supervisor';
 
     const updated = await db.update('schedules', schedule.id, {
@@ -370,7 +378,7 @@ export const scheduleService = {
    * HR review or acknowledgement of a daily schedule.
    */
   async reviewHRSchedule(scheduleId, hrUserId, reviewData, req = null) {
-    const schedule = await db.findById('schedules', Number(scheduleId));
+    const schedule = await db.findById('schedules', toDbId(scheduleId));
     if (!schedule) throw new Error('Schedule record not found.');
 
     const status = reviewData.status || 'ACKNOWLEDGED'; // 'ACKNOWLEDGED' | 'APPROVED' | 'REJECTED'
@@ -396,9 +404,11 @@ export const scheduleService = {
    * Deletes a draft or pending schedule.
    */
   async deleteSchedule(scheduleId, employeeId) {
-    const schedule = await db.findById('schedules', Number(scheduleId));
+    const schedule = await db.findById('schedules', toDbId(scheduleId));
     if (!schedule) throw new Error('Schedule not found.');
-    if (schedule.employee_id !== Number(employeeId)) throw new Error('Unauthorized.');
+    const employee = await findEmployeeByAnyId(db, employeeId);
+    const empId = employee ? employeeRef(employee) : toDbId(employeeId);
+    if (!sameId(schedule.employee_id, empId)) throw new Error('Unauthorized.');
     if (schedule.status === 'APPROVED') throw new Error('Cannot delete an approved schedule.');
 
     return await db.delete('schedules', schedule.id);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, ShieldCheck, Sparkles, AlertCircle, KeyRound, CheckCircle2, X, Lock, Mail } from 'lucide-react';
 import { api } from '../lib/api';
-import { supabase, requestSupabasePasswordReset, updateSupabasePassword } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 export default function LoginPage({ onLogin, onNavigatePublic }) {
   const [identifier, setIdentifier] = useState('');
@@ -64,8 +64,13 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
       });
 
       const token = res.token || res.data?.token;
+      const refreshToken = res.refresh_token || res.data?.refresh_token;
       const userData = res.user || res.data?.user || (res.id ? res : res.data);
 
+      if (supabase && token && refreshToken) {
+        const { error: sessionError } = await supabase.auth.setSession({ access_token: token, refresh_token: refreshToken });
+        if (sessionError) throw sessionError;
+      }
       if (token) {
         localStorage.setItem('ewf_token', token);
       }
@@ -97,13 +102,6 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
       
       const res = await api.post('/auth/forgot-password', { identifier: emailToSend });
       
-      if (supabase && emailToSend.includes('@')) {
-        try {
-          await requestSupabasePasswordReset(emailToSend);
-        } catch (sbErr) {
-          console.warn('Supabase direct reset request note:', sbErr.message);
-        }
-      }
 
       setForgotSuccess(
         res.message ||
@@ -134,14 +132,13 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
     setForgotLoading(true);
     setForgotError('');
     try {
-      // 1. Update in Supabase Auth if in active recovery session
-      if (supabase && isRecoverySession) {
-        await updateSupabasePassword(newPassword);
+      const { data } = supabase ? await supabase.auth.getSession() : { data: null };
+      const recoveryToken = data?.session?.access_token;
+      if (!isRecoverySession || !recoveryToken) {
+        throw new Error('Please open a valid password recovery link from your email.');
       }
-
-      // 2. Also update through backend
       const res = await api.post('/auth/reset-password', {
-        identifier: forgotIdentifier,
+        token: recoveryToken,
         new_password: newPassword
       });
 

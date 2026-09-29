@@ -14,7 +14,8 @@ import {
   Shield,
   Layers,
   Search,
-  Building2
+  Building2,
+  Sparkles
 } from 'lucide-react';
 import { toggleAudioMute, isAudioMuted } from '../../lib/sound';
 
@@ -30,7 +31,8 @@ export default function TopHeader({
   onManualSync,
   syncing = false,
   onLogout,
-  onToggleMobileMenu
+  onToggleMobileMenu,
+  onOpenInsights
 }) {
   const [muted, setMuted] = useState(isAudioMuted());
   const [profileOpen, setProfileOpen] = useState(false);
@@ -86,6 +88,8 @@ export default function TopHeader({
 
       {/* Right Actions */}
       <div className="flex items-center gap-2 sm:gap-3">
+        <button type="button" onClick={onOpenInsights} title="Open operational AI" aria-label="Open operational AI"
+          className="p-2 text-orange-600 hover:bg-orange-500/10 rounded-lg"><Sparkles size={17} /></button>
         {/* Offline / Online Pill */}
         <div className="flex items-center gap-1.5">
           <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${

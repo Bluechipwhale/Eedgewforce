@@ -21,14 +21,59 @@ import {
   Plus,
   Radio,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  MessageSquare,
+  Search
 } from 'lucide-react';
 import { api } from '../../lib/api';
+
+function TaskDiscussion({ taskId }) {
+  const [open, setOpen] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const load = async () => {
+    try { const result = await api.get(`/tasks/${taskId}/discussion`, { fresh: true }); setComments(Array.isArray(result) ? result : result?.data || []); setError(''); }
+    catch (err) { setError(err.message || 'Discussion unavailable.'); }
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    const interval = setInterval(load, 15000);
+    return () => clearInterval(interval);
+  }, [open, taskId]);
+  const toggle = () => { const next = !open; setOpen(next); if (next) load(); };
+  const send = async e => {
+    e.preventDefault(); if (!draft.trim() || sending) return;
+    setSending(true); setError('');
+    try { await api.post(`/tasks/${taskId}/discussion`, { comment: draft }); setDraft(''); await load(); }
+    catch (err) { setError(err.message || 'Could not add update.'); }
+    finally { setSending(false); }
+  };
+  return <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+    <button type="button" aria-expanded={open} onClick={toggle} className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-300 hover:text-orange-500">
+      <MessageSquare size={14} /> Team discussion{comments.length ? ` (${comments.length})` : ''}
+    </button>
+    {open && <div className="mt-2 space-y-2">
+      <div className="max-h-40 overflow-y-auto space-y-2" aria-live="polite">
+        {comments.map(comment => <article key={comment.id} className="text-xs border-l-2 border-orange-400 pl-2">
+          <div className="flex flex-wrap gap-x-2 text-zinc-500"><b className="text-zinc-800 dark:text-zinc-200">{comment.author}</b><time>{comment.created_at ? new Date(comment.created_at).toLocaleString() : ''}</time></div>
+          <p className="mt-0.5 whitespace-pre-wrap break-words">{comment.comment}</p>
+        </article>)}
+        {!comments.length && !error && <p className="text-xs text-zinc-500">No updates yet.</p>}
+      </div>
+      {error && <p role="alert" className="text-xs text-rose-600">{error}</p>}
+      <form onSubmit={send} className="flex gap-2"><input aria-label="Write a task update" maxLength={2000} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Share a progress update or ask a question..." className="form-input min-w-0 text-xs" />
+        <button disabled={!draft.trim() || sending} className="btn-secondary px-3 text-xs disabled:opacity-50">{sending ? 'Posting…' : 'Post'}</button></form>
+    </div>}
+  </div>;
+}
 
 export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSupervisor = false }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // 'all', 'urgent', 'delivery', 'completed'
+  const [query, setQuery] = useState('');
   const [selectedTask, setSelectedTask] = useState(null);
   const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [completionNotes, setCompletionNotes] = useState('');
@@ -46,11 +91,12 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
   const loadTasks = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/tasks');
+      const res = await api.get('/tasks', { fresh: true });
       const list = Array.isArray(res) ? res : (res?.tasks || res?.data || []);
       setTasks(list);
-    } catch {
-      // offline fallback
+      setErrorMsg('');
+    } catch (err) {
+      setErrorMsg(err.message || 'Could not load team tasks. Check your connection and refresh.');
     } finally {
       setLoading(false);
     }
@@ -117,10 +163,14 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
 
   // Filter tasks
   const filteredTasks = tasks.filter(t => {
-    if (filter === 'urgent') return ['high', 'urgent'].includes(t.priority?.toLowerCase()) && t.status !== 'completed';
-    if (filter === 'delivery') return t.task_type === 'delivery' && t.status !== 'completed';
-    if (filter === 'completed') return t.status === 'completed';
-    return t.status !== 'completed';
+    const completed = ['completed', 'cancelled', 'canceled'].includes(String(t.status).toLowerCase());
+    if (filter === 'urgent' && (!['high', 'urgent'].includes(t.priority?.toLowerCase()) || completed)) return false;
+    if (filter === 'delivery' && (t.task_type !== 'delivery' || completed)) return false;
+    if (filter === 'completed' && !completed) return false;
+    if (!['completed', 'urgent', 'delivery'].includes(filter) && completed) return false;
+    const words = query.trim().toLowerCase().split(/\s+/);
+    const haystack = [t.title, t.description, t.client_name, t.project_name, t.assigned_employee?.name, t.assigned_employee?.department].join(' ').toLowerCase();
+    return words.every(word => haystack.includes(word));
   });
 
   return (
@@ -140,7 +190,7 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
                 </span>
               </h3>
               <p className="text-xs text-zinc-500">
-                Never forget client deliverables • 4-stage delivery checkpoints • Multi-channel alert telemetry
+                Company-wide task visibility • Shared team discussions • Deadline and delivery checkpoints
               </p>
             </div>
           </div>
@@ -175,7 +225,7 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
             onClick={() => setFilter('all')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${filter === 'all' ? 'bg-orange-500 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200'}`}
           >
-            Active Tasks ({tasks.filter(t => t.status !== 'completed').length})
+            Active Tasks ({tasks.filter(t => !['completed', 'cancelled', 'canceled'].includes(String(t.status).toLowerCase())).length})
           </button>
           <button
             onClick={() => setFilter('urgent')}
@@ -195,13 +245,19 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
             onClick={() => setFilter('completed')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${filter === 'completed' ? 'bg-emerald-600 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200'}`}
           >
-            Completed ({tasks.filter(t => t.status === 'completed').length})
+            Completed ({tasks.filter(t => ['completed', 'cancelled', 'canceled'].includes(String(t.status).toLowerCase())).length})
           </button>
+        </div>
+
+        <div className="relative max-w-lg"><Search size={14} className="absolute left-3 top-3 text-zinc-400" />
+          <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search tasks, colleagues, clients, projects..." className="form-input pl-9 text-xs" aria-label="Search team tasks" />
         </div>
 
         {/* Task List */}
         <div className="space-y-3 pt-2">
-          {filteredTasks.length === 0 ? (
+          {loading && tasks.length === 0 && <p role="status" className="p-6 text-center text-xs text-zinc-500">Loading team tasks…</p>}
+          {!loading && errorMsg && tasks.length === 0 && <div role="alert" className="p-6 text-center text-xs text-zinc-500">{errorMsg}</div>}
+          {!loading && !errorMsg && (filteredTasks.length === 0 ? (
             <div className="p-8 text-center rounded-xl border border-dashed border-zinc-200 dark:border-zinc-800 surface-card-subtle space-y-2">
               <CheckCircle2 size={24} className="mx-auto text-emerald-500" />
               <p className="text-xs font-bold text-zinc-700 dark:text-zinc-300">All caught up!</p>
@@ -211,6 +267,7 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
             filteredTasks.map((tsk) => {
               const isOverdue = tsk.is_overdue;
               const isUrgent = ['urgent', 'high'].includes(tsk.priority?.toLowerCase());
+              const isCompleted = ['completed', 'cancelled', 'canceled'].includes(String(tsk.status).toLowerCase());
 
               return (
                 <div
@@ -338,7 +395,7 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
 
                     {/* Action Buttons */}
                     <div className="flex items-center gap-2">
-                      {!tsk.acknowledged_at && tsk.status !== 'completed' && (
+                      {!tsk.acknowledged_at && !isCompleted && (
                         <button
                           onClick={() => handleAcknowledge(tsk.id)}
                           className="btn-secondary text-xs py-1 px-2.5 rounded-lg font-bold flex items-center gap-1 hover:bg-zinc-200"
@@ -348,7 +405,7 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
                         </button>
                       )}
 
-                      {tsk.status !== 'completed' ? (
+                      {!isCompleted ? (
                         <button
                           onClick={() => openCompleteModal(tsk)}
                           className="btn-primary text-xs py-1 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold flex items-center gap-1"
@@ -363,10 +420,11 @@ export function TodayTaskCenter({ onOpenCreateModal, currentEmployeeId, isSuperv
                       )}
                     </div>
                   </div>
+                  <TaskDiscussion taskId={tsk.id} />
                 </div>
               );
             })
-          )}
+          ))}
         </div>
       </div>
 

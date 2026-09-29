@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { reminderService } from './reminderService.js';
 import { emailService } from './emailService.js';
 import { whatsappService } from './whatsappService.js';
+import { employeeRef, findEmployeeByAnyId, findUserByAnyId } from '../utils/id.js';
 
 let workerInterval = null;
 let isProcessing = false;
@@ -95,8 +96,8 @@ export const reminderWorker = {
       return;
     }
 
-    const employee = await db.findById('employees', rem.employee_id || task.assigned_to);
-    const user = employee?.user_id ? await db.findById('users', employee.user_id) : (rem.user_id ? await db.findById('users', rem.user_id) : null);
+    const employee = await findEmployeeByAnyId(db, rem.employee_id || task.assigned_to);
+    const user = employee?.user_id ? await findUserByAnyId(db, employee.user_id) : (rem.user_id ? await findUserByAnyId(db, rem.user_id) : null);
 
     const recipientEmail = user?.email || employee?.email;
     const recipientPhone = user?.phone || employee?.phone;
@@ -122,7 +123,7 @@ export const reminderWorker = {
           : (rem.reminder_level === 'overdue' ? `Attention: "${task.title}" is OVERDUE. Please mark complete immediately.` : `Reminder: "${task.title}" is due at ${task.due_at ? new Date(task.due_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Soon'}.`);
 
         await db.insert('notifications', {
-          employee_id: employee.id,
+          employee_id: employeeRef(employee),
           company_id: rem.company_id,
           type: 'Tasks',
           title: notifTitle,
@@ -236,12 +237,12 @@ export const reminderWorker = {
   async triggerSupervisorEscalation(task, employee, employeeName) {
     try {
       const supervisorId = employee?.reporting_manager_id || task.supervisor_id;
-      const supervisor = supervisorId ? await db.findById('employees', supervisorId) : null;
-      const supervisorUser = supervisor?.user_id ? await db.findById('users', supervisor.user_id) : null;
+      const supervisor = supervisorId ? await findEmployeeByAnyId(db, supervisorId) : null;
+      const supervisorUser = supervisor?.user_id ? await findUserByAnyId(db, supervisor.user_id) : null;
 
       if (supervisor?.id) {
         await db.insert('notifications', {
-          employee_id: supervisor.id,
+          employee_id: employeeRef(supervisor),
           company_id: task.company_id,
           type: 'Tasks',
           title: `🚨 [ESCALATION] Overdue Task: ${task.title}`,
@@ -257,10 +258,10 @@ export const reminderWorker = {
       // Also alert HR Command Center
       const hrUsers = await db.find('users', { role_code: 'hr_manager' });
       for (const hr of hrUsers) {
-        const hrEmp = await db.findOne('employees', { user_id: hr.id });
+        const hrEmp = await db.findOne('employees', { user_id: hr.uuid || hr.auth_user_id || hr.id });
         if (hrEmp?.id) {
           await db.insert('notifications', {
-            employee_id: hrEmp.id,
+            employee_id: employeeRef(hrEmp),
             company_id: task.company_id,
             type: 'HR',
             title: `Compliance Notice: Overdue Directive (${employeeName})`,

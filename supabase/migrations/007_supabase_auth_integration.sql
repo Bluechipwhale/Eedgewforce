@@ -4,10 +4,10 @@
 -- ==============================================================================
 
 -- 1. ADD AUTH_USER_ID FOREIGN KEYS
-ALTER TABLE public.users 
+ALTER TABLE public.users
     ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 
-ALTER TABLE public.employees 
+ALTER TABLE public.employees
     ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 
 -- 2. PERFORMANCE INDEXES
@@ -26,13 +26,13 @@ DECLARE
     matching_emp_id BIGINT;
 BEGIN
     -- Look for matching record in public.users by email
-    SELECT id INTO matching_user_id 
-    FROM public.users 
-    WHERE LOWER(email) = LOWER(NEW.email) 
+    SELECT id INTO matching_user_id
+    FROM public.users
+    WHERE LOWER(email) = LOWER(NEW.email)
     LIMIT 1;
 
     IF matching_user_id IS NOT NULL THEN
-        UPDATE public.users 
+        UPDATE public.users
         SET auth_user_id = NEW.id,
             updated_at = NOW()
         WHERE id = matching_user_id;
@@ -56,6 +56,11 @@ CREATE TRIGGER on_auth_user_created
 -- 4. GRANULAR ROW LEVEL SECURITY POLICIES FOR SUPABASE AUTH TOKENS
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
+
+-- Remove earlier policies that cast Supabase UUID subjects to bigint.
+DROP POLICY IF EXISTS "HR and Admins have full access on employees" ON public.employees;
+DROP POLICY IF EXISTS "Employees can view their own profile" ON public.employees;
+DROP POLICY IF EXISTS "Employees can update their own profile" ON public.employees;
 
 -- Users table policies
 DROP POLICY IF EXISTS "Users can read their own account" ON public.users;

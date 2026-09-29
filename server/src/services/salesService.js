@@ -4,6 +4,7 @@
 // ==============================================================================
 
 import { db } from '../config/database.js';
+import { employeeRef, sameId, toDbId } from '../utils/id.js';
 import { calculateOrderTotals, calculateCommission, VAT_RATE } from '../utils/calculations.js';
 import { recordAudit } from '../middleware/auditLogger.js';
 import { storageService } from './storageService.js';
@@ -17,7 +18,7 @@ export const salesService = {
     const curMonthStr = todayStr.slice(0, 7);
     const monthlyTarget = Number(process.env.MONTHLY_SALES_TARGET || 10000000);
 
-    const allOrders = await db.find('orders', { sales_agent_id: Number(employeeId) });
+    const allOrders = await db.find('orders', { sales_agent_id: toDbId(employeeId) });
     const activeOrders = allOrders.filter(o => o.status !== 'cancelled');
 
     // Today's metrics
@@ -38,14 +39,14 @@ export const salesService = {
 
     // Outstanding debt of registered customers
     const customers = await db.find('customers');
-    const myCustomers = customers.filter(c => Number(c.registered_by) === Number(employeeId) || !c.registered_by);
+    const myCustomers = customers.filter(c => sameId(c.registered_by, employeeId) || !c.registered_by);
     const outstandingDebt = myCustomers.reduce((sum, c) => sum + Math.max(0, Number(c.balance || 0)), 0);
 
     // New Outlets Added this month
     const newOutletsAdded = myCustomers.filter(c => String(c.created_at || '').slice(0, 7) === curMonthStr).length;
 
     // Today's visits completed
-    const visits = await db.find('visits', { agent_id: Number(employeeId) });
+    const visits = await db.find('visits', { agent_id: toDbId(employeeId) });
     const visitsToday = visits.filter(v => String(v.planned_time || v.created_at).slice(0, 10) === todayStr);
     const visitsCompletedToday = visitsToday.filter(v => v.status === 'completed').length;
 
@@ -117,7 +118,7 @@ export const salesService = {
       longitude: longitude ? Number(longitude) : null,
       balance: 0.00,
       credit_limit: Number(credit_limit || 500000.00),
-      registered_by: Number(employeeId),
+      registered_by: toDbId(employeeId),
       status: 'active'
     });
 
@@ -207,7 +208,7 @@ export const salesService = {
       const order = await tx.insert('orders', {
         order_number: orderNumber,
         customer_id: Number(customer_id),
-        sales_agent_id: Number(employeeId),
+        sales_agent_id: toDbId(employeeId),
         status: isCredit ? 'confirmed' : 'delivered',
         subtotal: totals.subtotal,
         discount_amount: totals.discountAmount,
@@ -242,7 +243,7 @@ export const salesService = {
           new_quantity: newStock,
           type: 'SALE',
           reference_id: orderNumber,
-          created_by: Number(employeeId)
+          created_by: toDbId(employeeId)
         });
       }
 
@@ -272,7 +273,7 @@ export const salesService = {
 
     return orders.filter(o => {
       const filterAgentId = filters.sales_agent_id || filters.agent_id;
-      if (filterAgentId && Number(o.sales_agent_id || o.agent_id) !== Number(filterAgentId)) return false;
+      if (filterAgentId && !sameId(o.sales_agent_id || o.agent_id, filterAgentId)) return false;
       if (filters.status && filters.status !== 'all' && o.status !== filters.status) return false;
       if (filters.customer_id && Number(o.customer_id) !== Number(filters.customer_id)) return false;
       return true;
@@ -313,7 +314,7 @@ export const salesService = {
 
       const collection = await tx.insert('collections', {
         customer_id: Number(customer_id),
-        agent_id: Number(employeeId),
+        agent_id: toDbId(employeeId),
         amount: payAmount,
         payment_method: payment_method || 'Cash',
         reference_number: reference_number || `REF-${Date.now()}`,
@@ -341,13 +342,13 @@ export const salesService = {
     const employees = await db.find('employees');
 
     return collections.filter(c => {
-      if (filters.agent_id && Number(c.agent_id) !== Number(filters.agent_id)) return false;
+      if (filters.agent_id && !sameId(c.agent_id, filters.agent_id)) return false;
       if (filters.customer_id && Number(c.customer_id) !== Number(filters.customer_id)) return false;
       return true;
     }).map(c => ({
       ...c,
       customer: customers.find(cust => Number(cust.id) === Number(c.customer_id)),
-      agent: employees.find(emp => Number(emp.id) === Number(c.agent_id))
+      agent: employees.find(emp => sameId(emp.id, c.agent_id) || sameId(emp.uuid, c.agent_id) || sameId(emp.auth_user_id, c.agent_id))
     }));
   },
 
@@ -366,7 +367,7 @@ export const salesService = {
     const priceDiff = obsPrice - oPrice;
 
     const intel = await db.insert('competitor_intel', {
-      agent_id: Number(employeeId),
+      agent_id: toDbId(employeeId),
       customer_id: customer_id ? Number(customer_id) : null,
       competitor_brand,
       product_name,
@@ -529,7 +530,7 @@ export const salesService = {
     const collection = await db.insert('collections', {
       company_id: compId,
       customer_id: Number(customer_id),
-      agent_id: user?.employee?.id || user?.id || 1,
+      agent_id: user?.employee ? employeeRef(user.employee) : (user?.employee_id || user?.id || 1),
       order_id: order_id ? Number(order_id) : null,
       amount: recAmount,
       payment_method: 'Paystack',
@@ -554,4 +555,5 @@ export const salesService = {
     return collection;
   }
 };
+
 

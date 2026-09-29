@@ -4,14 +4,21 @@
 // ==============================================================================
 
 import { db } from '../config/database.js';
+import { findEmployeeByAnyId, employeeRef, toDbId } from '../utils/id.js';
+
+async function resolveEmployeeRef(employeeId) {
+  const employee = await findEmployeeByAnyId(db, employeeId);
+  return employee ? employeeRef(employee) : toDbId(employeeId);
+}
 
 export const notificationService = {
   /**
    * Dispatches a notification to an employee.
    */
   async notify(employeeId, type, title, body, link = null) {
+    const empId = await resolveEmployeeRef(employeeId);
     return await db.insert('notifications', {
-      employee_id: Number(employeeId),
+      employee_id: empId,
       type: type || 'System',
       title,
       body,
@@ -24,7 +31,8 @@ export const notificationService = {
    * Retrieves user notifications with unread count.
    */
   async getNotifications(employeeId) {
-    const list = await db.find('notifications', { employee_id: Number(employeeId) }, { order: { column: 'created_at', ascending: false } });
+    const empId = await resolveEmployeeRef(employeeId);
+    const list = await db.find('notifications', { employee_id: empId }, { order: { column: 'created_at', ascending: false } });
     const unreadCount = list.filter(n => !n.read).length;
     return {
       notifications: list,
@@ -37,7 +45,8 @@ export const notificationService = {
    */
   async markRead(notificationId, employeeId) {
     if (notificationId === 'all') {
-      const all = await db.find('notifications', { employee_id: Number(employeeId), read: false });
+      const empId = await resolveEmployeeRef(employeeId);
+      const all = await db.find('notifications', { employee_id: empId, read: false });
       for (const n of all) {
         await db.update('notifications', n.id, { read: true });
       }
@@ -51,7 +60,8 @@ export const notificationService = {
    * Saves Web Push subscription.
    */
   async subscribePush(employeeId, endpoint, subscriptionJson) {
-    const existing = await db.findOne('push_subscriptions', { employee_id: Number(employeeId) });
+    const empId = await resolveEmployeeRef(employeeId);
+    const existing = await db.findOne('push_subscriptions', { employee_id: empId });
     if (existing) {
       return await db.update('push_subscriptions', existing.id, {
         endpoint,
@@ -60,7 +70,7 @@ export const notificationService = {
     }
 
     return await db.insert('push_subscriptions', {
-      employee_id: Number(employeeId),
+      employee_id: empId,
       endpoint,
       subscription_json: typeof subscriptionJson === 'string' ? subscriptionJson : JSON.stringify(subscriptionJson)
     });

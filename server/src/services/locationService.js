@@ -7,6 +7,44 @@
 import { db } from '../config/database.js';
 import { recordAudit } from '../middleware/auditLogger.js';
 import { validateCoordinates } from '../utils/haversine.js';
+import { employeeRef, findEmployeeByAnyId, isUuid, sameId, toDbId } from '../utils/id.js';
+import { isTestMode } from '../utils/runtime.js';
+
+function getActorAuthUserId(actor = null, req = null) {
+  const candidates = [
+    actor?.auth_user_id,
+    actor?.employee?.auth_user_id,
+    req?.user?.auth_user_id,
+    req?.user?.employee?.auth_user_id
+  ];
+  return candidates.find(isUuid) || null;
+}
+
+async function resolveEmployeeForLocation(employeeId, companyId) {
+  const employee = await findEmployeeByAnyId(db, employeeId, companyId);
+
+  if (!employee) {
+    throw new Error('Employee not found or belongs to another company.');
+  }
+
+  return employee;
+}
+
+function isRetiredDefaultLocation(location) {
+  const name = String(location?.name || '').trim().toLowerCase();
+  const address = String(location?.address || '').trim().toLowerCase();
+  return (
+    name === 'lagos victoria island office' ||
+    name === 'ikeja central distribution depot' ||
+    address === '14b idowu martins st, victoria island' ||
+    address === 'plot 12 commercial ave, ikeja industrial'
+  );
+}
+
+function visibleWorkLocations(locations) {
+  if (isTestMode) return locations;
+  return locations.filter(location => !isRetiredDefaultLocation(location));
+}
 
 export const locationService = {
   /**
@@ -14,7 +52,7 @@ export const locationService = {
    */
   async getLocations(companyId = 1, filter = {}) {
     const cid = Number(companyId);
-    let locations = await db.find('work_locations', { company_id: cid });
+    let locations = visibleWorkLocations(await db.find('work_locations', { company_id: cid }));
 
     if (filter.status) {
       locations = locations.filter(l => l.status === filter.status);
@@ -43,8 +81,8 @@ export const locationService = {
    * Retrieves a single work location by ID with tenant security check.
    */
   async getLocationById(locationId, companyId = 1) {
-    const loc = await db.findById('work_locations', Number(locationId));
-    if (!loc || Number(loc.company_id) !== Number(companyId)) {
+    const loc = await db.findById('work_locations', toDbId(locationId));
+    if (!loc || isRetiredDefaultLocation(loc) || Number(loc.company_id) !== Number(companyId)) {
       throw new Error(`Work location #${locationId} not found or unauthorized.`);
     }
     return loc;
@@ -103,7 +141,7 @@ export const locationService = {
       geofence_radius: radius,
       geofence_radius_meters: radius,
       status: 'active',
-      created_by: actor?.id || req?.user?.id || null,
+      created_by: getActorAuthUserId(actor, req),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     });
@@ -160,7 +198,7 @@ export const locationService = {
     const existing = await this.getLocationById(locationId, companyId);
 
     // Deactivate all employee assignments for this location
-    const assignments = await db.find('employee_location_assignments', { location_id: Number(locationId) });
+    const assignments = await db.find('employee_location_assignments', { location_id: toDbId(locationId) });
     for (const a of assignments) {
       await db.update('employee_location_assignments', a.id, { is_active: false });
     }
@@ -191,12 +229,12 @@ export const locationService = {
 
     const cid = Number(company_id || actor?.company_id || req?.user?.company_id || 1);
 
-    const employee = await db.findById('employees', Number(employee_id));
-    if (!employee || Number(employee.company_id) !== cid) {
-      throw new Error('Employee not found or belongs to another company.');
-    }
+    const employee = await resolveEmployeeForLocation(employee_id, cid);
+    const employeeDbId = employeeRef(employee);
+    const actorAuthUserId = getActorAuthUserId(actor, req);
 
     const location = await this.getLocationById(location_id, cid);
+    const locationDbId = toDbId(location.id);
 
     const isPrimary = Boolean(is_primary || assignment_type === 'primary' || assignment_type === 'permanent');
     const isTemporary = assignment_type === 'temporary';
@@ -212,7 +250,7 @@ export const locationService = {
     // If making primary, un-mark previous primary assignments for this employee
     if (isPrimary) {
       const currentAssignments = await db.find('employee_location_assignments', {
-        employee_id: Number(employee_id),
+        employee_id: employeeDbId,
         company_id: cid
       });
       for (const a of currentAssignments) {
@@ -224,8 +262,8 @@ export const locationService = {
 
     // Check if assignment for this location already exists
     const existing = await db.findOne('employee_location_assignments', {
-      employee_id: Number(employee_id),
-      location_id: Number(location_id),
+      employee_id: employeeDbId,
+      location_id: locationDbId,
       company_id: cid
     });
 
@@ -235,10 +273,10 @@ export const locationService = {
 
     // Look up previous primary assignment for history log
     const prevPrimary = await db.findOne('employee_location_assignments', {
-      employee_id: Number(employee_id),
+      employee_id: employeeDbId,
       is_primary: true
     });
-    if (prevPrimary && prevPrimary.location_id !== Number(location_id)) {
+    if (prevPrimary && !sameId(prevPrimary.location_id, locationDbId)) {
       previousLocationId = prevPrimary.location_id;
       const prevLoc = await db.findById('work_locations', prevPrimary.location_id);
       previousLocationName = prevLoc?.name || null;
@@ -251,20 +289,20 @@ export const locationService = {
         is_active: true,
         start_date: start_date ? new Date(start_date).toISOString() : null,
         end_date: end_date ? new Date(end_date).toISOString() : null,
-        assigned_by: actor?.id || req?.user?.id || null,
+        assigned_by: actorAuthUserId,
         updated_at: new Date().toISOString()
       });
     } else {
       assignmentRecord = await db.insert('employee_location_assignments', {
         company_id: cid,
-        employee_id: Number(employee_id),
-        location_id: Number(location_id),
+        employee_id: employeeDbId,
+        location_id: locationDbId,
         assignment_type: isTemporary ? 'temporary' : (isPrimary ? 'primary' : 'secondary'),
         is_primary: isPrimary,
         is_active: true,
         start_date: start_date ? new Date(start_date).toISOString() : null,
         end_date: end_date ? new Date(end_date).toISOString() : null,
-        assigned_by: actor?.id || req?.user?.id || null,
+        assigned_by: actorAuthUserId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       });
@@ -273,14 +311,14 @@ export const locationService = {
     // Record audit history
     await db.insert('location_assignment_history', {
       company_id: cid,
-      employee_id: Number(employee_id),
+      employee_id: employeeDbId,
       previous_location_id: previousLocationId,
       previous_location_name: previousLocationName,
       new_location_id: location.id,
       new_location_name: location.name,
       assignment_type: assignmentRecord.assignment_type,
       action: isTemporary ? 'TEMPORARY_ASSIGNED' : 'ASSIGNED',
-      changed_by: actor?.id || req?.user?.id || null,
+      changed_by: actorAuthUserId,
       changed_by_name: actor?.full_name || req?.user?.full_name || 'HR Administrator',
       reason,
       created_at: new Date().toISOString()
@@ -308,13 +346,13 @@ export const locationService = {
    * Removes an employee location assignment.
    */
   async removeEmployeeLocationAssignment(assignmentId, companyId = 1, actor = null, reason = 'Assignment Terminated', req = null) {
-    const assignment = await db.findById('employee_location_assignments', Number(assignmentId));
+    const assignment = await db.findById('employee_location_assignments', toDbId(assignmentId));
     if (!assignment || Number(assignment.company_id) !== Number(companyId)) {
       throw new Error('Assignment record not found or unauthorized.');
     }
 
     const location = await db.findById('work_locations', assignment.location_id);
-    const employee = await db.findById('employees', assignment.employee_id);
+    const employee = await findEmployeeByAnyId(db, assignment.employee_id);
 
     await db.update('employee_location_assignments', assignment.id, {
       is_active: false,
@@ -330,7 +368,7 @@ export const locationService = {
       new_location_name: null,
       assignment_type: assignment.assignment_type,
       action: 'REMOVED',
-      changed_by: actor?.id || req?.user?.id || null,
+      changed_by: getActorAuthUserId(actor, req),
       changed_by_name: actor?.full_name || req?.user?.full_name || 'HR Administrator',
       reason,
       created_at: new Date().toISOString()
@@ -349,8 +387,9 @@ export const locationService = {
    * Retrieves all assigned locations for an employee with live status indicators.
    */
   async getEmployeeLocations(employeeId, companyId = 1) {
-    const empId = Number(employeeId);
     const cid = Number(companyId);
+    const employee = await resolveEmployeeForLocation(employeeId, cid);
+    const empId = employeeRef(employee);
 
     const assignments = await db.find('employee_location_assignments', {
       employee_id: empId,
@@ -358,11 +397,11 @@ export const locationService = {
       is_active: true
     });
 
-    const allLocations = await db.find('work_locations', { company_id: cid });
+    const allLocations = visibleWorkLocations(await db.find('work_locations', { company_id: cid }));
     const now = new Date();
 
     const populated = assignments.map(a => {
-      const loc = allLocations.find(l => Number(l.id) === Number(a.location_id)) || null;
+      const loc = allLocations.find(l => sameId(l.id, a.location_id)) || null;
       let isTempActive = true;
 
       if (a.assignment_type === 'temporary') {
@@ -427,14 +466,14 @@ export const locationService = {
     const cid = Number(companyId);
     const employees = await db.find('employees', { company_id: cid });
     const assignments = await db.find('employee_location_assignments', { company_id: cid, is_active: true });
-    const workLocations = await db.find('work_locations', { company_id: cid });
+    const workLocations = visibleWorkLocations(await db.find('work_locations', { company_id: cid }));
     const users = await db.find('users', { company_id: cid });
 
     const now = new Date();
 
     return employees.map(emp => {
-      const empAssignments = assignments.filter(a => Number(a.employee_id) === Number(emp.id));
-      const user = users.find(u => Number(u.id) === Number(emp.user_id));
+      const empAssignments = assignments.filter(a => sameId(a.employee_id, employeeRef(emp)));
+      const user = users.find(u => sameId(u.id, emp.user_id) || sameId(u.auth_user_id, emp.auth_user_id));
 
       const primary = empAssignments.find(a => a.is_primary);
       const activeTemp = empAssignments.find(a => {
@@ -448,13 +487,13 @@ export const locationService = {
       let status = 'Not Assigned'; // 'Assigned' | 'Temporary Active' | 'Not Assigned' | 'Requires Review'
 
       if (activeTemp) {
-        assignedLoc = workLocations.find(l => Number(l.id) === Number(activeTemp.location_id));
+        assignedLoc = workLocations.find(l => sameId(l.id, activeTemp.location_id));
         status = 'Temporary Active';
       } else if (primary) {
-        assignedLoc = workLocations.find(l => Number(l.id) === Number(primary.location_id));
+        assignedLoc = workLocations.find(l => sameId(l.id, primary.location_id));
         status = 'Assigned';
       } else if (empAssignments.length > 0) {
-        assignedLoc = workLocations.find(l => Number(l.id) === Number(empAssignments[0].location_id));
+        assignedLoc = workLocations.find(l => sameId(l.id, empAssignments[0].location_id));
         status = 'Assigned';
       }
 

@@ -6,6 +6,7 @@
 import { db } from '../config/database.js';
 import { calculatePayslipBreakdown } from '../utils/calculations.js';
 import { recordAudit } from '../middleware/auditLogger.js';
+import { employeeRef, findEmployeeByAnyId, sameId, userRef } from '../utils/id.js';
 
 export const accountingService = {
   /**
@@ -42,7 +43,7 @@ export const accountingService = {
     const employees = await db.find('employees');
 
     return payslips.map(p => {
-      const emp = employees.find(e => Number(e.id) === Number(p.employee_id));
+      const emp = employees.find(e => sameId(employeeRef(e), p.employee_id) || sameId(e.id, p.employee_id));
       return {
         ...p,
         employee: emp ? {
@@ -67,7 +68,7 @@ export const accountingService = {
     const updated = await db.update('settlements', settlement.id, {
       status,
       notes: notes || settlement.notes,
-      reviewed_by: Number(actor?.id || 1),
+      reviewed_by: userRef(actor) || actor?.id || 1,
       reviewed_at: new Date().toISOString()
     });
 
@@ -79,7 +80,7 @@ export const accountingService = {
    * Generates or recalculates a single employee payslip.
    */
   async generateSinglePayslip(employeeId, payMonth, customEarnings = {}, actor = null, req = null) {
-    const emp = await db.findById('employees', employeeId);
+    const emp = await findEmployeeByAnyId(db, employeeId);
     if (!emp) throw new Error('Employee not found');
 
     const targetMonth = payMonth || (new Date().toISOString().slice(0, 7) + '-01');
@@ -90,7 +91,8 @@ export const accountingService = {
 
     const breakdown = calculatePayslipBreakdown(basic, housing, transport, other);
 
-    const existing = await db.findOne('payslips', { employee_id: emp.id, pay_month: targetMonth });
+    const empId = employeeRef(emp);
+    const existing = await db.findOne('payslips', { employee_id: empId, pay_month: targetMonth });
     let record;
     if (existing) {
       record = await db.update('payslips', existing.id, {
@@ -101,16 +103,16 @@ export const accountingService = {
       });
     } else {
       record = await db.insert('payslips', {
-        employee_id: emp.id,
+        employee_id: empId,
         pay_month: targetMonth,
         ...breakdown,
         status: 'published',
         notes: customEarnings.notes || '',
-        generated_by: actor?.id || null
+        generated_by: userRef(actor) || null
       });
     }
 
-    await recordAudit(actor, 'PAYSLIP_SINGLE_GENERATED', 'payslips', record.id, { employee_id: emp.id, targetMonth }, req);
+    await recordAudit(actor, 'PAYSLIP_SINGLE_GENERATED', 'payslips', record.id, { employee_id: empId, targetMonth }, req);
     return record;
   },
 
@@ -118,13 +120,14 @@ export const accountingService = {
    * Uploads an external PDF / Document payslip for a specific staff member.
    */
   async uploadCustomPayslip(employeeId, payMonth, fileUrl, notes = '', actor = null, req = null) {
-    const emp = await db.findById('employees', employeeId);
+    const emp = await findEmployeeByAnyId(db, employeeId);
     if (!emp) throw new Error('Employee not found');
 
     const targetMonth = payMonth || (new Date().toISOString().slice(0, 7) + '-01');
     const breakdown = calculatePayslipBreakdown(emp.base_salary, emp.housing_allowance, emp.transport_allowance, emp.other_allowance);
 
-    const existing = await db.findOne('payslips', { employee_id: emp.id, pay_month: targetMonth });
+    const empId = employeeRef(emp);
+    const existing = await db.findOne('payslips', { employee_id: empId, pay_month: targetMonth });
     let record;
     if (existing) {
       record = await db.update('payslips', existing.id, {
@@ -136,17 +139,17 @@ export const accountingService = {
       });
     } else {
       record = await db.insert('payslips', {
-        employee_id: emp.id,
+        employee_id: empId,
         pay_month: targetMonth,
         ...breakdown,
         pdf_url: fileUrl,
         notes: notes || 'Document uploaded by Finance',
         status: 'published',
-        generated_by: actor?.id || null
+        generated_by: userRef(actor) || null
       });
     }
 
-    await recordAudit(actor, 'PAYSLIP_DOCUMENT_UPLOADED', 'payslips', record.id, { employee_id: emp.id, fileUrl }, req);
+    await recordAudit(actor, 'PAYSLIP_DOCUMENT_UPLOADED', 'payslips', record.id, { employee_id: empId, fileUrl }, req);
     return record;
   },
 
@@ -159,7 +162,8 @@ export const accountingService = {
     const generated = [];
 
     for (const emp of employees) {
-      const existing = await db.findOne('payslips', { employee_id: emp.id, pay_month: targetMonth });
+      const empId = employeeRef(emp);
+      const existing = await db.findOne('payslips', { employee_id: empId, pay_month: targetMonth });
       const breakdown = calculatePayslipBreakdown(
         emp.base_salary,
         emp.housing_allowance,
@@ -175,11 +179,11 @@ export const accountingService = {
         });
       } else {
         record = await db.insert('payslips', {
-          employee_id: emp.id,
+          employee_id: empId,
           pay_month: targetMonth,
           ...breakdown,
           status: 'published',
-          generated_by: actor?.id || null
+          generated_by: userRef(actor) || null
         });
       }
       generated.push(record);

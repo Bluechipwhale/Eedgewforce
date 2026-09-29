@@ -6,12 +6,13 @@ import { taskService } from '../services/taskService.js';
 import { reminderService } from '../services/reminderService.js';
 import { idleService } from '../services/idleService.js';
 import { reminderWorker } from '../services/reminderWorker.js';
-import { hrService } from '../services/hrService.js';
+import { getTaskDirectory } from '../services/taskDirectoryService.js';
+import { employeeRef, userRef } from '../utils/id.js';
 
 export const taskController = {
   async getEmployees(req, res) {
     try {
-      const employees = await hrService.getEmployees(req.user);
+      const employees = await getTaskDirectory(req.user);
       res.json({ success: true, data: employees, employees });
     } catch (err) {
       res.status(500).json({ success: false, error: { message: err.message } });
@@ -29,7 +30,7 @@ export const taskController = {
   async getTasks(req, res) {
     try {
       const filters = {
-        employee_id: req.query.employee_id || (req.query.mine === 'true' ? (req.user.employee?.id || req.user.id) : null),
+        employee_id: req.query.employee_id || (req.query.mine === 'true' ? (req.user.employee ? employeeRef(req.user.employee) : (userRef(req.user) || req.user.id)) : null),
         status: req.query.status,
         today: req.query.today === 'true'
       };
@@ -38,6 +39,17 @@ export const taskController = {
     } catch (err) {
       res.status(500).json({ success: false, error: { message: err.message } });
     }
+  },
+
+  async getDiscussion(req, res) {
+    try { res.json({ success: true, data: await taskService.getDiscussion(req.params.id, req.user) }); }
+    catch (err) { res.status(404).json({ success: false, error: { message: err.message } }); }
+  },
+  async addComment(req, res) {
+    try {
+      const comment = await taskService.addComment(req.params.id, req.body?.comment, req.user, req);
+      res.status(201).json({ success: true, data: comment });
+    } catch (err) { res.status(400).json({ success: false, error: { message: err.message } }); }
   },
 
   async acknowledgeTask(req, res) {
@@ -72,8 +84,8 @@ export const taskController = {
       const rem = await reminderService.scheduleReminder({
         ...req.body,
         task_id: req.params.id,
-        user_id: req.user.id,
-        employee_id: req.user.employee?.id
+        user_id: userRef(req.user) || req.user.id,
+        employee_id: req.user.employee ? employeeRef(req.user.employee) : null
       });
       res.status(201).json({ success: true, data: rem, message: 'Reminder scheduled.' });
     } catch (err) {

@@ -6,8 +6,8 @@ import { db, supabase } from '../config/database.js';
 import { supabaseAuthService } from './supabaseAuthService.js';
 import { logger } from '../utils/logger.js';
 import bcrypt from 'bcryptjs';
-
-const isTestMode = process.env.NODE_ENV === 'test' || Boolean(process.env.TEST_MODE);
+import { findEmployeeByAnyId } from '../utils/id.js';
+import { isTestMode } from '../utils/runtime.js';
 
 export const adminService = {
   /**
@@ -185,7 +185,7 @@ export const adminService = {
     if (!newPassword || newPassword.trim().length < 6) {
       throw new Error('New password must be at least 6 characters.');
     }
-    const emp = await db.findById('employees', employeeId);
+    const emp = await findEmployeeByAnyId(db, employeeId);
     if (!emp) throw new Error('Employee not found');
 
     const bcrypt = (await import('bcryptjs')).default;

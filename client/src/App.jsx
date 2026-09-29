@@ -148,7 +148,7 @@ export default function App() {
     // Subscribe to Supabase Auth state changes
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_IN' && session?.access_token) {
+        if (['SIGNED_IN', 'TOKEN_REFRESHED'].includes(event) && session?.access_token) {
           localStorage.setItem('ewf_token', session.access_token);
           api.get('/auth/me')
             .then((res) => {

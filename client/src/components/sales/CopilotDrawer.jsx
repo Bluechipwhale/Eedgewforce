@@ -6,7 +6,7 @@ export default function CopilotDrawer({ isOpen, onClose, selectedCustomer, curre
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: 'Hello Adebanjo! I am your **EdgeWForce Sales AI Copilot**. I can help you handle price objections, calculate profitable bundles, recommend cross-sells, or script professional debt recovery conversations. How can I assist you today?'
+      content: 'I can summarize the sales and operations records available to your account, explain risks, and suggest next steps. Ask about a customer, balance, order, stock, or task.'
     }
   ]);
   const [input, setInput] = useState('');
@@ -66,13 +66,13 @@ export default function CopilotDrawer({ isOpen, onClose, selectedCustomer, curre
               </div>
               <div>
                 <h3 className="font-extrabold text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
-                  Sales AI Copilot
+                  Operational AI
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-600 dark:text-orange-400">
                     Live
                   </span>
                 </h3>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {selectedCustomer ? `Context: ${selectedCustomer.name}` : 'General Commercial Strategy'}
+                  {selectedCustomer ? `Customer: ${selectedCustomer.name}` : 'Insights grounded in your permitted company data'}
                 </p>
               </div>
             </div>

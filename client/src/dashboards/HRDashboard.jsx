@@ -64,6 +64,8 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
 
   const [stats, setStats] = useState(null);
   const [employees, setEmployees] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [staffLoadError, setStaffLoadError] = useState('');
   const [attendance, setAttendance] = useState([]);
   const [idleEvents, setIdleEvents] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
@@ -144,10 +146,16 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
   });
 
   const loadData = async () => {
+    setStaffLoading(true);
     try {
-      const [st, emp, att, idl, lv, tsk, sos, org, rnk, ann, bdays, locs, audits] = await Promise.all([
+      const [st, , att, idl, lv, tsk, sos, org, rnk, ann, bdays, locs, audits] = await Promise.all([
         api.get('/hr/dashboard').catch(() => null),
-        api.get('/hr/employees').catch(() => []),
+        api.get('/hr/employees').then(emp => {
+          setEmployees(Array.isArray(emp) ? emp : (emp?.employees || emp?.data || []));
+          setStaffLoadError('');
+        }).catch(error => {
+          setStaffLoadError(error.message || 'Staff could not be loaded. Please try again.');
+        }).finally(() => setStaffLoading(false)),
         api.get('/hr/attendance').catch(() => []),
         api.get('/hr/idle-events').catch(() => []),
         api.get('/hr/leave').catch(() => []),
@@ -162,7 +170,6 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
       ]);
 
       if (st) setStats(st);
-      setEmployees(Array.isArray(emp) ? emp : (emp?.employees || emp?.data || []));
       setAttendance(Array.isArray(att) ? att : (att?.records || att?.data || []));
       setIdleEvents(Array.isArray(idl) ? idl : (idl?.records || idl?.data || []));
       setLeaveRequests(Array.isArray(lv) ? lv : (lv?.requests || lv?.data || []));
@@ -460,7 +467,7 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
           { id: 'schedules', label: 'Daily Schedules Roster', icon: CalendarCheck },
           { id: 'safety', label: `Field SOS & Safety (${sosEvents.filter(s => s.status === 'active').length ? '🚨 ' + sosEvents.filter(s => s.status === 'active').length + ' ACTIVE' : sosEvents.length})`, icon: ShieldAlert },
           { id: 'locations', label: 'Work Locations & Geofence', icon: Building2 },
-          { id: 'people', label: `Staff Directory (${employees.length})`, icon: Users },
+          { id: 'people', label: staffLoading ? 'Staff Directory (Loading...)' : `Staff Directory (${employees.length})`, icon: Users },
           { id: 'announcements', label: `Announcements (${announcements.length})`, icon: Megaphone },
           { id: 'birthdays', label: `Birthdays & Celebrations (${birthdaysData.all?.length || 0})`, icon: Cake },
           { id: 'organization', label: 'Organization Chart', icon: Network },
@@ -636,6 +643,19 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
       {/* TAB 2: STAFF DIRECTORY & WORKFORCE MANAGEMENT */}
       {tab === 'people' && (
         <div className="space-y-4 animate-in fade-in duration-200">
+
+          {(staffLoading || staffLoadError) && (
+            <div className={`p-3 rounded-lg border text-xs font-semibold flex items-center justify-between gap-3 ${
+              staffLoadError
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                : 'bg-orange-500/10 border-orange-500/30 text-orange-700 dark:text-orange-300'
+            }`}>
+              <span>{staffLoadError ? `Staff directory unavailable: ${staffLoadError}` : 'Loading staff directory...'}</span>
+              {staffLoadError && (
+                <button onClick={loadData} className="underline underline-offset-2 shrink-0">Retry</button>
+              )}
+            </div>
+          )}
           
           {/* Top Summary & Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
@@ -770,6 +790,11 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                  {!staffLoading && !staffLoadError && employees.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-10 px-4 text-center text-zinc-500">No staff records are registered yet.</td>
+                    </tr>
+                  )}
                   {employees
                     .filter(emp => {
                       const term = staffSearch.toLowerCase().trim();

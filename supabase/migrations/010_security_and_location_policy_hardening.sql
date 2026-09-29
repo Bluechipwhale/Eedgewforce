@@ -54,6 +54,7 @@ GRANT EXECUTE ON FUNCTION private.is_location_admin() TO authenticated;
 
 ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.work_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.employee_location_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.location_assignment_history ENABLE ROW LEVEL SECURITY;
@@ -64,6 +65,18 @@ FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Service role full access on users" ON public.users;
 CREATE POLICY "Service role full access on users" ON public.users
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS companies_read_same_tenant ON public.companies;
+CREATE POLICY companies_read_same_tenant ON public.companies
+FOR SELECT TO authenticated
+USING (
+    id = (SELECT private.current_company_id())
+    OR (SELECT private.current_role_code()) = 'SUPER_ADMIN'
+);
+
+DROP POLICY IF EXISTS "Service role full access on companies" ON public.companies;
+CREATE POLICY "Service role full access on companies" ON public.companies
 FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Employees can view own record" ON public.employees;
@@ -252,21 +265,22 @@ REVOKE ALL ON TABLE public.employees, public.users FROM anon;
 REVOKE ALL ON TABLE public.work_locations, public.employee_location_assignments, public.location_assignment_history FROM anon;
 GRANT SELECT, UPDATE ON public.employees TO authenticated;
 GRANT SELECT ON public.users TO authenticated;
+GRANT SELECT ON public.companies TO authenticated;
 GRANT SELECT ON public.work_locations, public.employee_location_assignments, public.location_assignment_history TO authenticated;
 GRANT INSERT, UPDATE, DELETE ON public.work_locations, public.employee_location_assignments TO authenticated;
-GRANT ALL ON public.employees, public.users, public.work_locations, public.employee_location_assignments, public.location_assignment_history TO service_role;
+GRANT ALL ON public.companies, public.employees, public.users, public.work_locations, public.employee_location_assignments, public.location_assignment_history TO service_role;
 
 -- Seed the requested offices without overwriting existing location IDs.
 INSERT INTO public.work_locations
-  (id, company_id, name, location_type, address, state, lga, city, latitude, longitude, geofence_radius_meters, status)
-SELECT 4, 1, 'Head Officer', 'Office', '15 Atiba Osborne Mende Maryland Lagos', 'Lagos', 'Maryland', 'Lagos', 6.3418700, 3.2231000, 150, 'active'
+  (company_id, name, location_type, address, state, lga, city, latitude, longitude, geofence_radius_meters, status)
+SELECT 1, 'Head Officer', 'Office', '15 Atiba Osborne Mende Maryland Lagos', 'Lagos', 'Maryland', 'Lagos', 6.3418700, 3.2231000, 150, 'active'
 WHERE NOT EXISTS (
   SELECT 1 FROM public.work_locations WHERE company_id = 1 AND name = 'Head Officer'
 );
 
 INSERT INTO public.work_locations
-  (id, company_id, name, location_type, address, state, lga, city, latitude, longitude, geofence_radius_meters, status)
-SELECT 5, 1, 'Ogba Office', 'Office', '9 Emmanuel Olorunfemi street off college road Ogba', 'Lagos', 'Ikeja', 'Lagos', 6.6381454, 3.3311149, 200, 'active'
+  (company_id, name, location_type, address, state, lga, city, latitude, longitude, geofence_radius_meters, status)
+SELECT 1, 'Ogba Office', 'Office', '9 Emmanuel Olorunfemi street off college road Ogba', 'Lagos', 'Ikeja', 'Lagos', 6.6381454, 3.3311149, 200, 'active'
 WHERE NOT EXISTS (
   SELECT 1 FROM public.work_locations WHERE company_id = 1 AND name = 'Ogba Office'
 );

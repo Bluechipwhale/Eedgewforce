@@ -4,6 +4,7 @@
 
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { employeeRef, findEmployeeByAnyId, toDbId } from '../utils/id.js';
 
 export const customerService = {
   async getCustomers(companyId, filters = {}) {
@@ -65,10 +66,10 @@ export const customerService = {
     let agent = null;
     let supervisor = null;
     if (customer.assigned_agent_id) {
-      agent = await db.findById('employees', customer.assigned_agent_id);
+      agent = await findEmployeeByAnyId(db, customer.assigned_agent_id);
     }
     if (customer.assigned_supervisor_id) {
-      supervisor = await db.findById('employees', customer.assigned_supervisor_id);
+      supervisor = await findEmployeeByAnyId(db, customer.assigned_supervisor_id);
     }
 
     // Summary calculations
@@ -116,8 +117,8 @@ export const customerService = {
       email: customerData.email || '',
       credit_limit: Number(customerData.credit_limit || 1000000),
       balance: Number(customerData.balance || 0),
-      assigned_agent_id: customerData.assigned_agent_id ? Number(customerData.assigned_agent_id) : null,
-      assigned_supervisor_id: customerData.assigned_supervisor_id ? Number(customerData.assigned_supervisor_id) : null,
+      assigned_agent_id: customerData.assigned_agent_id ? toDbId(customerData.assigned_agent_id) : null,
+      assigned_supervisor_id: customerData.assigned_supervisor_id ? toDbId(customerData.assigned_supervisor_id) : null,
       status: 'active',
       total_sales_ngn: 0
     });

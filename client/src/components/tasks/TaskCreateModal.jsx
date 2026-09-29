@@ -17,9 +17,13 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { api } from '../../lib/api';
+import StaffPicker from './StaffPicker';
 
 export function TaskCreateModal({ isOpen, onClose, onCreated }) {
   const [employees, setEmployees] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const [staffAttempt, setStaffAttempt] = useState(0);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -37,19 +41,25 @@ export function TaskCreateModal({ isOpen, onClose, onCreated }) {
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     if (isOpen) {
+      setStaffLoading(true);
+      setStaffError('');
       const fetchEmps = async () => {
         try {
-          const res = await api.get('/tasks/assignable-employees').catch(() => null) || await api.get('/hr/employees').catch(() => []);
+          const res = await api.get('/tasks/assignable-employees', { fresh: true });
           const list = Array.isArray(res) ? res : (res?.employees || res?.data || []);
-          setEmployees(list);
-        } catch {
-          setEmployees([]);
+          if (!cancelled) setEmployees(list);
+        } catch (err) {
+          if (!cancelled) { setEmployees([]); setStaffError(err.message || 'Unable to load staff.'); }
+        } finally {
+          if (!cancelled) setStaffLoading(false);
         }
       };
       fetchEmps();
     }
-  }, [isOpen]);
+    return () => { cancelled = true; };
+  }, [isOpen, staffAttempt]);
 
   if (!isOpen) return null;
 
@@ -57,6 +67,10 @@ export function TaskCreateModal({ isOpen, onClose, onCreated }) {
     e.preventDefault();
     if (!formData.title || !formData.assigned_to) {
       setErrorMsg('Task title and assigned staff member are required.');
+      return;
+    }
+    if (!employees.some(e => String(e.id) === String(formData.assigned_to) && e.assignable !== false)) {
+      setErrorMsg('Choose an available staff member from the current directory.');
       return;
     }
 
@@ -130,24 +144,9 @@ export function TaskCreateModal({ isOpen, onClose, onCreated }) {
 
           <div className="grid md:grid-cols-2 gap-3">
             {/* Assigned Staff */}
-            <div>
-              <label className="block text-xs font-bold text-zinc-800 dark:text-zinc-200 mb-1">
-                Assigned Staff Member *
-              </label>
-              <select
-                required
-                className="form-input text-xs"
-                value={formData.assigned_to}
-                onChange={(e) => setFormData({ ...formData, assigned_to: e.target.value })}
-              >
-                <option value="">-- Choose Employee --</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name} ({emp.employee_code}) - {emp.position}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <StaffPicker employees={employees} value={formData.assigned_to}
+              onChange={assigned_to => setFormData({ ...formData, assigned_to })}
+              loading={staffLoading} error={staffError} onRetry={() => setStaffAttempt(n => n + 1)} />
 
             {/* Task Type */}
             <div>
@@ -183,7 +182,7 @@ export function TaskCreateModal({ isOpen, onClose, onCreated }) {
             {/* Project Name */}
             <div>
               <label className="block text-xs font-bold text-zinc-800 dark:text-zinc-200 mb-1">
-                Project / Campaign Campaign
+                Project / Campaign
               </label>
               <input
                 type="text"
@@ -308,7 +307,7 @@ export function TaskCreateModal({ isOpen, onClose, onCreated }) {
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || staffLoading || !!staffError || !formData.assigned_to}
               className="btn-primary text-xs py-2 px-4 bg-orange-500 text-white font-bold flex items-center gap-1.5"
             >
               <Send size={14} />

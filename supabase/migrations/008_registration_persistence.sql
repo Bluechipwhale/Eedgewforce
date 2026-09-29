@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS public.customers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 001 creates the core customer table first; add the registration fields here
+-- as ALTERs so this migration also works when that table already exists.
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES public.companies(id) ON DELETE CASCADE;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS business_name TEXT;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS customer_type TEXT DEFAULT 'Retail';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS tier TEXT DEFAULT 'Tier 1';
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS geofence_radius INTEGER DEFAULT 150;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS assigned_agent_id BIGINT;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS assigned_supervisor_id BIGINT;
+
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS auth_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS email TEXT;

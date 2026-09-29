@@ -6,6 +6,7 @@ import express from 'express';
 import { db } from '../config/database.js';
 import { hrController } from '../controllers/hrController.js';
 import { requireAuth } from '../middleware/auth.js';
+import { employeeRef } from '../utils/id.js';
 
 import { scheduleController } from '../controllers/scheduleController.js';
 import { hasRole } from '../middleware/rbac.js';
@@ -59,7 +60,7 @@ router.get('/holidays', async (req, res) => {
 router.get('/notifications', requireAuth, async (req, res) => {
   try {
     const empId = req.user.employee?.id || req.user.id;
-    const notifications = await db.find('notifications', { employee_id: Number(empId) }, { order: { column: 'created_at', ascending: false } });
+    const notifications = await db.find('notifications', { employee_id: req.user.employee ? employeeRef(req.user.employee) : empId }, { order: { column: 'created_at', ascending: false } });
     res.json({ success: true, data: notifications, notifications });
   } catch (err) {
     res.status(500).json({ success: false, error: { message: err.message } });
