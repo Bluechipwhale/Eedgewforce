@@ -33,6 +33,20 @@ cd server && npm install
 cd ../client && npm install
 ```
 
+### Local Configuration and Login Troubleshooting
+
+Keep credentials in ignored environment files, never in GitHub:
+
+- Configure `server/.env` from `server/.env.example`. When starting with `npm start` from the repository root, the root `.env` must use the same Supabase project and application secret.
+- Set `DATABASE_MODE=supabase` and `SUPABASE_SCHEMA_VARIANT=numbered` for the numbered migrations in this repository.
+- Configure `client/.env.local` with `VITE_SUPABASE_URL`, the public `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL=/api`. Never put a service-role key in a `VITE_` variable.
+- For local development, use `NODE_ENV=development` and allow `http://127.0.0.1:5173` in `CLIENT_URL`. Restart the backend after changing environment files.
+- On Windows systems that require the operating system certificate store, use Node 24 and `SUPABASE_USE_SYSTEM_CA=true`; never disable TLS certificate verification.
+
+Run `npm run dev` from the root and keep it running while using the app. Open `http://127.0.0.1:5173/`. Both `http://127.0.0.1:3000/api/health` and `http://127.0.0.1:5173/api/health` should report `healthy` with `database: supabase`. A Vite login proxy error can mean the backend is stopped; a 503 health response means the live database configuration or connection needs attention.
+
+GitHub stores the source code; it does not run the backend. Public hosting needs its own private environment variables. Replace seeded default passwords and any exposed secrets before public deployment.
+
 ### 3. Running the Test Suite
 The automated test suite covers strict 150m boundary calculations, 7.5% VAT, 5% commission, working days, payroll deductions, and end-to-end integration workflows:
 ```bash
