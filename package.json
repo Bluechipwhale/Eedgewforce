@@ -16,7 +16,10 @@
     "vercel-build": "npm --workspace client run build",
     "postinstall": "npm --workspace client run build",
     "dev": "npx --yes concurrently \"npm --workspace server run dev\" \"npm --workspace client run dev\"",
-    "test": "npm --workspace server test"
+    "test": "npm --workspace server test",
+    "db:build": "node supabase/build-installer.mjs",
+    "db:check": "node supabase/build-installer.mjs --check",
+    "test:database": "node supabase/tests/installer.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
@@ -31,6 +34,7 @@
     "nodemailer": "^7.0.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "concurrently": "^9.2.1"
   },
   "engines": {

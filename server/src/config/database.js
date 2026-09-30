@@ -14,6 +14,7 @@ import { logger } from '../utils/logger.js';
 import { isTestMode } from '../utils/runtime.js';
 import { isUuid } from '../utils/id.js';
 import { createSupabaseClients } from './supabaseClients.js';
+import { resolveSchemaVariant } from './schemaVariant.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
@@ -35,7 +36,7 @@ const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_KEY;
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const databaseKey = serviceRoleKey || anonKey;
-const usesNumberedSchema = process.env.SUPABASE_SCHEMA_VARIANT === 'numbered';
+const usesNumberedSchema = resolveSchemaVariant(process.env.SUPABASE_SCHEMA_VARIANT) === 'numbered';
 
 if (isProduction && (!supabaseUrl || !serviceRoleKey)) {
   throw new Error('Live database mode requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. Local database fallback is disabled.');

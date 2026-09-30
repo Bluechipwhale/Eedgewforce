@@ -1,0 +1,25 @@
+name: Database and Application Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run db:check
+      - run: npm run test:database
+      - run: node --test --test-concurrency=1 server/src/tests/*.test.js
+        env:
+          NODE_ENV: test
+      - run: npm run build

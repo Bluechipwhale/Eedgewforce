@@ -488,7 +488,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('edgewforce-media', 'edgewforce-media', TRUE)
-ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
+ON CONFLICT (id) DO NOTHING;
 
 DROP POLICY IF EXISTS "Public Access edgewforce-media" ON storage.objects;
 CREATE POLICY "Public Access edgewforce-media" ON storage.objects

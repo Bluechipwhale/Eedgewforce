@@ -35,6 +35,8 @@ cd ../client && npm install
 
 ### Local Configuration and Login Troubleshooting
 
+For database installation or repair, back up Supabase and run the complete current `supabase/supabase_production_schema.sql`. All four SQL entry files now share one migration-tracked, rerunnable installer; no separate seed is needed. See [the database guide](supabase/README.md). Do not rerun individual historical migrations against an upgraded database.
+
 Keep credentials in ignored environment files, never in GitHub:
 
 - Configure `server/.env` from `server/.env.example`. When starting with `npm start` from the repository root, the root `.env` must use the same Supabase project and application secret.
@@ -130,7 +132,7 @@ The database layer is located in `supabase/migrations/`:
 - `001_initial_schema.sql`: 32+ relational PostgreSQL tables with indexes, foreign keys, constraints, and audit tables.
 - `002_security_rls.sql`: Row-Level Security (RLS) policies enforcing multi-tenant role permissions.
 - `003_audit_triggers.sql`: Automated PostgreSQL audit triggers logging user actions.
-- `seed.sql`: Realistic Nigerian commercial retail seed data.
+- `supabase/seed.sql`: Compatibility copy of the complete installer; its staff seed runs only for a new database.
 
 *Dual Data-Access Engine*: In local development or offline environments without active Supabase credentials, the backend automatically uses the ACID-compliant atomic local transactional store (`server/data/store.json`).
 
