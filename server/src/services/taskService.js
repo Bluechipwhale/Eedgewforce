@@ -182,7 +182,7 @@ export const taskService = {
 
     const updated = await db.update('tasks', task.id, {
       acknowledged_at: new Date().toISOString(),
-      acknowledged_by: actor.id
+      acknowledged_by: userRef(actor)
     });
 
     await recordAudit(actor, 'TASK_ACKNOWLEDGED', 'tasks', task.id, { title: task.title }, req);
@@ -216,7 +216,7 @@ export const taskService = {
     const updated = await db.update('tasks', task.id, {
       status: 'completed',
       completed_at: new Date().toISOString(),
-      completed_by: actor?.id || null,
+      completed_by: userRef(actor) || null,
       completion_notes: completion_notes || 'Task deliverable confirmed and marked completed.',
       evidence_url,
       evidence_name,

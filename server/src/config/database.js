@@ -13,6 +13,7 @@ import bcrypt from 'bcryptjs';
 import { logger } from '../utils/logger.js';
 import { isTestMode } from '../utils/runtime.js';
 import { isUuid } from '../utils/id.js';
+import { retryLegacyRuntimeActorWrite } from './runtimeActorCompat.js';
 import { createSupabaseClients } from './supabaseClients.js';
 import { resolveSchemaVariant } from './schemaVariant.js';
 
@@ -587,7 +588,12 @@ export const db = {
 
     if (supabase && !isTestMode) {
       try {
-        const { data, error } = await supabase.from(canonicalTable).insert(normalized).select().single();
+        let { data, error } = await supabase.from(canonicalTable).insert(normalized).select().single();
+        if (error && usesNumberedSchema) {
+          const retried = await retryLegacyRuntimeActorWrite(canonicalTable, normalized, error, supabase,
+            legacy => supabase.from(canonicalTable).insert(legacy).select().single());
+          if (retried) ({ data, error } = retried);
+        }
         if (error) {
           logger.error(`Supabase insert for ${canonicalTable} failed: ${error.message}`);
           throw error;
@@ -636,7 +642,12 @@ export const db = {
 
     if (supabase && !isTestMode) {
       try {
-        const { data, error } = await supabase.from(canonicalTable).update(normalized).eq('id', id).select().single();
+        let { data, error } = await supabase.from(canonicalTable).update(normalized).eq('id', id).select().single();
+        if (error && usesNumberedSchema) {
+          const retried = await retryLegacyRuntimeActorWrite(canonicalTable, normalized, error, supabase,
+            legacy => supabase.from(canonicalTable).update(legacy).eq('id', id).select().single());
+          if (retried) ({ data, error } = retried);
+        }
         if (error) {
           logger.error(`Supabase update for ${canonicalTable} failed: ${error.message}`);
           throw error;

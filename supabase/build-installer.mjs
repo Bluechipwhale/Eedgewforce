@@ -55,6 +55,13 @@ const references = [...read('migrations/012_uuid_identity_references_global.sql'
   .map(([, table, column, parent]) => [table, column, parent]);
 if (references.length < 40) throw new Error('Identity reference manifest is incomplete');
 references.push(['employee_location_assignments', 'employee_id', 'employees'], ['location_assignment_history', 'employee_id', 'employees'], ['task_reminders', 'employee_id', 'employees'], ['task_reminders', 'user_id', 'users']);
+references.push(
+  ['inventory_movements', 'recorded_by', 'users'],
+  ['orders', 'approved_by', 'users'],
+  ['order_approvals', 'approver_id', 'users'],
+  ['tasks', 'acknowledged_by', 'users'],
+  ['tasks', 'completed_by', 'users']
+);
 output += `
 -- Validate the identity contract before committing, including adopted databases.
 DO $verify$

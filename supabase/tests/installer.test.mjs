@@ -42,6 +42,20 @@ async function assertWrites(db) {
     INSERT INTO task_comments(task_id,author_id,comment)
       SELECT t.id,u.uuid,'Test comment' FROM tasks t CROSS JOIN users u WHERE u.id=1;
     INSERT INTO auth.users(email) SELECT email FROM public.users WHERE id=1;
+    UPDATE tasks SET acknowledged_by=(SELECT uuid FROM users WHERE id=1),
+      completed_by=(SELECT uuid FROM users WHERE id=1)
+      WHERE title='Installer test task';
+    INSERT INTO products(sku,name,category,price,cost_price)
+      VALUES ('INSTALLER-001','Installer product','Testing',100,50);
+    INSERT INTO inventory_movements(company_id,product_id,movement_type,quantity,recorded_by)
+      SELECT 1,id,'RESTOCK',1,(SELECT uuid FROM users WHERE id=1) FROM products WHERE sku='INSTALLER-001';
+    INSERT INTO customers(code,name,address) VALUES ('INSTALLER-001','Installer customer','Lagos');
+    INSERT INTO orders(order_number,customer_id,sales_agent_id,approved_by)
+      SELECT 'INSTALLER-001',c.id,e.uuid,u.uuid FROM customers c CROSS JOIN employees e
+      CROSS JOIN users u WHERE c.code='INSTALLER-001' AND e.id=11 AND u.id=1;
+    INSERT INTO order_approvals(company_id,order_id,approver_id,action)
+      SELECT 1,o.id,u.uuid,'APPROVED' FROM orders o CROSS JOIN users u
+      WHERE o.order_number='INSTALLER-001' AND u.id=1;
   `);
   const linked = (await db.query('SELECT count(*) AS n FROM employees e JOIN users u ON e.user_id=u.uuid WHERE e.auth_user_id=u.auth_user_id AND u.id=1')).rows[0];
   assert.equal(Number(linked.n), 1);
@@ -86,6 +100,20 @@ for (const through of [10, 11, 14]) {
         await db.exec('ALTER TABLE employee_location_assignments ALTER COLUMN legacy_employee_id SET NOT NULL');
         // The approved 005 must also run alone against an existing UUID schema.
         await db.exec(sql('migrations/005_staff_hr_management_and_rls.sql'));
+        await db.exec(`
+          INSERT INTO products(sku,name,category,price,cost_price) VALUES ('OLD-001','Old product','Testing',100,50);
+          INSERT INTO inventory_movements(company_id,product_id,movement_type,quantity,recorded_by)
+            SELECT 1,id,'RESTOCK',1,1 FROM products WHERE sku='OLD-001';
+          INSERT INTO customers(code,name,address) VALUES ('OLD-001','Old customer','Lagos');
+          INSERT INTO orders(order_number,customer_id,sales_agent_id,approved_by)
+            SELECT 'OLD-001',c.id,e.uuid,1 FROM customers c CROSS JOIN employees e
+            WHERE c.code='OLD-001' AND e.id=11;
+          INSERT INTO order_approvals(company_id,order_id,approver_id,action)
+            SELECT 1,id,1,'APPROVED' FROM orders WHERE order_number='OLD-001';
+          INSERT INTO tasks(title,assigned_to,assigned_by,acknowledged_by,completed_by)
+            SELECT 'Old task',e.uuid,u.uuid,1,1 FROM employees e CROSS JOIN users u
+            WHERE e.id=11 AND u.id=1;
+        `);
         await assert.rejects(db.exec("INSERT INTO employees(user_id,employee_code,first_name,last_name) VALUES (1,'BAD','Bad','Seed')"), {code: '42804'});
         await assert.rejects(db.exec('CREATE TABLE broken_field_visits (employee_id UUID REFERENCES employees(id))'), {code: '42804'});
       }
@@ -94,6 +122,17 @@ for (const through of [10, 11, 14]) {
         assert.equal((await db.query("SELECT public FROM storage.buckets WHERE id='edgewforce-media'")).rows[0].public, false);
         const view = (await db.query("SELECT reloptions FROM pg_class WHERE oid='public.public_employee_directory'::regclass")).rows[0];
         assert.ok(view.reloptions.includes('security_invoker=true'));
+        for (const [table, column] of [
+          ['inventory_movements', 'recorded_by'], ['orders', 'approved_by'],
+          ['order_approvals', 'approver_id'], ['tasks', 'acknowledged_by'],
+          ['tasks', 'completed_by']
+        ]) {
+          const rows = (await db.query(`SELECT ${column} AS current_id, legacy_${column} AS old_id
+            FROM ${table} WHERE legacy_${column} IS NOT NULL`)).rows;
+          assert.equal(rows.length, 1, `${table}.${column}`);
+          assert.equal(Number(rows[0].old_id), 1);
+          assert.equal(rows[0].current_id, (await db.query('SELECT uuid FROM users WHERE id=1')).rows[0].uuid);
+        }
       }
       assert.equal((await snapshot(db)).length, 68);
       assert.equal((await db.query('SELECT password_hash FROM users WHERE id=1')).rows[0].password_hash, 'preserved-password');
@@ -116,6 +155,22 @@ test('an unmapped identity aborts the entire upgrade without leaving a half-conv
     await db.exec('ROLLBACK');
     const result = await db.query("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='employees' AND column_name='user_id'");
     assert.equal(result.rows[0].data_type, 'bigint');
+    assert.equal((await db.query("SELECT to_regclass('private.edgewforce_migrations') AS ledger")).rows[0].ledger, null);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM employees')).rows[0].n), 68);
+  } finally { await db.close(); }
+});
+
+test('an unmapped runtime actor leaves migration 016 and existing staff unchanged', async () => {
+  const db = await fixture();
+  try {
+    await historical(db, 14);
+    await db.exec(`INSERT INTO tasks(title,assigned_to,assigned_by,acknowledged_by)
+      SELECT 'Unmapped runtime actor',e.uuid,u.uuid,999999
+      FROM employees e CROSS JOIN users u WHERE e.id=11 AND u.id=1`);
+    await assert.rejects(db.exec(installer()), /Cannot map tasks\.acknowledged_by to users\.uuid/);
+    await db.exec('ROLLBACK');
+    const type = (await db.query("SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='tasks' AND column_name='acknowledged_by'")).rows[0].data_type;
+    assert.equal(type, 'bigint');
     assert.equal((await db.query("SELECT to_regclass('private.edgewforce_migrations') AS ledger")).rows[0].ledger, null);
     assert.equal(Number((await db.query('SELECT count(*) AS n FROM employees')).rows[0].n), 68);
   } finally { await db.close(); }

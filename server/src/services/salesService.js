@@ -4,7 +4,7 @@
 // ==============================================================================
 
 import { db } from '../config/database.js';
-import { employeeRef, sameId, toDbId } from '../utils/id.js';
+import { employeeRef, sameId, toDbId, userRef } from '../utils/id.js';
 import { calculateOrderTotals, calculateCommission, VAT_RATE } from '../utils/calculations.js';
 import { recordAudit } from '../middleware/auditLogger.js';
 import { storageService } from './storageService.js';
@@ -405,14 +405,14 @@ export const salesService = {
     const previousStatus = order.status;
     const updated = await db.update('orders', orderId, {
       status: 'APPROVED',
-      approved_by: approverUser.id,
+      approved_by: userRef(approverUser),
       approved_at: new Date().toISOString()
     });
 
     await db.insert('order_approvals', {
       company_id: order.company_id,
       order_id: Number(orderId),
-      approver_id: approverUser.id,
+      approver_id: userRef(approverUser),
       action: 'APPROVED',
       comments: comments || 'Order approved by supervisor',
       created_at: new Date().toISOString()
@@ -443,14 +443,14 @@ export const salesService = {
     const updated = await db.update('orders', orderId, {
       status: 'REJECTED',
       rejection_reason: reason || 'Order rejected by supervisor',
-      approved_by: approverUser.id,
+      approved_by: userRef(approverUser),
       approved_at: new Date().toISOString()
     });
 
     await db.insert('order_approvals', {
       company_id: order.company_id,
       order_id: Number(orderId),
-      approver_id: approverUser.id,
+      approver_id: userRef(approverUser),
       action: 'REJECTED',
       comments: reason || 'Order rejected',
       created_at: new Date().toISOString()
@@ -474,7 +474,7 @@ export const salesService = {
     await db.insert('order_approvals', {
       company_id: order.company_id,
       order_id: Number(orderId),
-      approver_id: approverUser.id,
+      approver_id: userRef(approverUser),
       action: 'REQUESTED_CHANGES',
       comments: comments || 'Modifications requested by supervisor',
       created_at: new Date().toISOString()

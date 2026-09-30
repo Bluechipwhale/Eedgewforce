@@ -4,6 +4,7 @@
 
 import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
+import { userRef } from '../utils/id.js';
 import { CONSOLIDATED_INVENTORY, PHYSICAL_INVENTORY_LOCATIONS } from '../data/inventoryData.js';
 
 export const inventoryService = {
@@ -145,7 +146,7 @@ export const inventoryService = {
       new_quantity: created.stock_quantity,
       reference_number: `INIT-${created.sku}`,
       notes: 'Initial product creation inventory balance',
-      recorded_by: user?.id || null
+      recorded_by: userRef(user) || null
     });
 
     return created;
@@ -224,7 +225,7 @@ export const inventoryService = {
       new_quantity: newQty,
       reference_number: reference_number || `MOV-${Date.now().toString().slice(-6)}`,
       notes: notes || '',
-      recorded_by: user?.id || null
+      recorded_by: userRef(user) || null
     });
 
     // Check if low stock alert is triggered

@@ -15,6 +15,8 @@ Run the complete **supabase_production_schema.sql** in the Supabase SQL Editor a
 | `work_locations.id`, assignment `location_id` | Matching bigint workplace IDs |
 | `auth_user_id` | UUID referencing Supabase Auth; separate from the stable application UUID |
 
+Other employee and user references, including task actors, order approvers, and inventory recorders, use these stable UUIDs. Their earlier numeric values remain in `legacy_*` columns where an upgrade converted existing data. Company, workplace, product, order, task, and other operational row IDs remain bigint because the API and related foreign keys use those identifiers throughout the app.
+
 Do not cast numbers such as `11` to UUID. The backend resolves that existing numeric staff ID to the employee's stored UUID before inserting a reference.
 
 ## Existing Databases
