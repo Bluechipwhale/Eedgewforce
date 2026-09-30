@@ -37,6 +37,7 @@ import { reminderWorker } from './services/reminderWorker.js';
 import { staffImportService } from './services/staffImportService.js';
 import { logger } from './utils/logger.js';
 import { supabase } from './config/database.js';
+import { isAllowedBrowserOrigin } from './utils/corsOrigin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
@@ -72,20 +73,22 @@ app.use(helmet({
   }
 }));
 
-const allowedOrigins = CLIENT_URL.split(',').map(x => x.trim()).filter(origin =>
-  origin && (!isProduction || !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/i.test(origin))
-);
-if (!isProduction) allowedOrigins.push('http://localhost:5173', 'http://127.0.0.1:5173');
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
+const allowedOrigins = CLIENT_URL.split(',').map(value => {
+  try { return new URL(value.trim()).origin; } catch { return null; }
+}).filter(origin => origin && (!isProduction || !/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::|$)/i.test(origin)));
+app.use(cors((req, callback) => callback(null, {
+  origin: (origin, originCallback) => {
+    if (isAllowedBrowserOrigin(origin, req.get('host'), allowedOrigins, isProduction)) {
+      originCallback(null, true);
     } else {
-      callback(new Error('Origin is not allowed by CORS.'));
+      const error = new Error('Origin is not allowed by CORS.');
+      error.status = 403;
+      error.code = 'CORS_ORIGIN_DENIED';
+      originCallback(error);
     }
   },
   credentials: true
-}));
+})));
 
 // 2. Request Body Parsers & Uploads
 app.use(express.json({ limit: '15mb' }));

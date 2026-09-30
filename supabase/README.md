@@ -2,6 +2,8 @@
 
 Run the complete **supabase_production_schema.sql** in the Supabase SQL Editor as the project database administrator. Take a database backup first.
 
+This installer repairs and verifies database structure only. A browser error such as `Origin is not allowed by CORS` comes from the backend's frontend-origin configuration, not from SQL. Rerunning the installer does not reset existing passwords; use the application's password recovery flow for a changed password.
+
 `schema.sql`, `seed.sql`, and `migrations/all.sql` are byte-identical compatibility copies of that installer. You need only one. Running another copy, or running the same copy again, is supported and does not replay the staff seed or reset passwords.
 
 ## Identity Contract
