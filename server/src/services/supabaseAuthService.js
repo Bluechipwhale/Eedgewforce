@@ -21,7 +21,9 @@ export const supabaseAuthService = {
       throw new Error('Email address is required for Supabase authentication.');
     }
     const cleanEmail = email.toLowerCase().trim();
-    const passwordToUse = (password && password.trim().length >= 6) ? password.trim() : 'ChangeMe123!';
+    if (typeof password !== 'string' || password.trim().length < 8) {
+      throw new Error('A unique password of at least 8 characters is required for Supabase authentication.');
+    }
 
     if (!supabaseAdmin?.auth?.admin) {
       throw new Error('Supabase Admin client is not configured on the server. SUPABASE_SERVICE_ROLE_KEY is required.');
@@ -29,7 +31,7 @@ export const supabaseAuthService = {
 
     const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email: cleanEmail,
-      password: passwordToUse,
+      password: password.trim(),
       email_confirm: true,
       user_metadata: {
         full_name: fullName || 'Staff Member',

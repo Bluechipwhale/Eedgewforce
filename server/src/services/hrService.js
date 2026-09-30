@@ -663,9 +663,10 @@ export const hrService = {
       department?.toLowerCase().includes('field') ? 'FIELD_AGENT' : 'EMPLOYEE'
     );
 
-    const passwordToUse = (staffData.password && staffData.password.trim().length >= 6)
-      ? staffData.password.trim()
-      : 'ChangeMe123!';
+    const passwordToUse = staffData.password?.trim() || (isTestMode ? 'ChangeMe123!' : '');
+    if (passwordToUse.length < 8 || (!isTestMode && passwordToUse === 'ChangeMe123!')) {
+      throw new Error('Set a unique initial password of at least 8 characters for this staff member.');
+    }
     const passwordHash = bcrypt.hashSync(passwordToUse, 10);
 
     const allEmps = await db.find('employees');
@@ -677,6 +678,7 @@ export const hrService = {
     const employee_code = staffData.employee_code || (staffData.staff_id ? `EMP-${staffData.staff_id}` : `EMP-${nextNum}`);
 
     let authUserId = null;
+    let createdAuthUser = false;
 
     // 1. Provision Real Supabase Auth User (Admin API with Service Role Key)
     if (!isTestMode) {
@@ -693,19 +695,40 @@ export const hrService = {
       if (!sbResult?.authUserId) {
         throw new Error('Failed to create user in Supabase Authentication.');
       }
+      if (sbResult.isExisting) {
+        throw new Error('A Supabase Auth account already uses this email. Contact IT to link it before registering staff.');
+      }
       authUserId = sbResult.authUserId;
+      createdAuthUser = true;
     } else {
       authUserId = '00000000-0000-0000-0000-' + String(Date.now()).slice(-12);
     }
 
-    // 2. Transactionally Insert Employee Record with authUserId as primary key
+    // Create the bigint user row first so employees.user_id can reference users.uuid.
+    let user = null;
     let employee = null;
     try {
-      employee = await db.insert('employees', {
-        id: authUserId,
-        user_id: authUserId,
+      const companyId = Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1);
+      user = await db.insert('users', {
         auth_user_id: authUserId,
-        company_id: Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1),
+        company_id: companyId,
+        full_name: `${first_name} ${last_name}`,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        password_hash: passwordHash,
+        role_code: finalRole,
+        status: 'active',
+        requires_password_change: true,
+        onboarding_status: 'Account Created'
+      });
+      if (!user?.id || (!user?.uuid && !isTestMode)) {
+        throw new Error('The user account was not saved with a UUID identity.');
+      }
+
+      employee = await db.insert('employees', {
+        user_id: userRef(user),
+        auth_user_id: authUserId,
+        company_id: companyId,
         employee_code,
         first_name,
         last_name,
@@ -714,7 +737,6 @@ export const hrService = {
         work_email: normalizedEmail,
         phone: normalizedPhone,
         department: department || 'Commercial Sales',
-        job_title: position || 'Operations Officer',
         position: position || 'Operations Officer',
         rank_code,
         work_location: staffData.work_location || territory || 'Headquarters',
@@ -723,35 +745,16 @@ export const hrService = {
         state_of_residence: staffData.state || 'Lagos',
         base_salary: Number(base_salary || 0),
         status: 'active',
-        onboarding_status: 'Active',
-        requires_password_change: false
+        onboarding_status: 'Account Created'
       });
-    } catch (empErr) {
-      // Atomic rollback: Delete created Supabase Auth user if database insert failed
-      if (authUserId && !isTestMode) {
+      if (!employee?.id) throw new Error('The employee profile was not saved.');
+    } catch (registrationError) {
+      if (user?.id) await db.delete('users', user.id).catch(() => {});
+      if (createdAuthUser && !isTestMode) {
         await supabaseAuthService.deleteUser(authUserId);
       }
-      logger.error(`Failed to create employee profile in Supabase: ${empErr.message}`);
-      throw new Error(`Failed to save employee profile: ${empErr.message}`);
-    }
-
-    // 3. Upsert user account for legacy/relational lookup
-    let user = null;
-    try {
-      user = await db.insert('users', {
-        uuid: authUserId,
-        auth_user_id: authUserId,
-        company_id: Number(staffData.company_id || actor?.company_id || req?.user?.company_id || 1),
-        full_name: `${first_name} ${last_name}`,
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        password_hash: passwordHash,
-        role_code: finalRole,
-        status: 'active',
-        requires_password_change: false
-      });
-    } catch (userErr) {
-      logger.warn(`users table sync note: ${userErr.message}`);
+      logger.error(`Failed to register staff: ${registrationError.message}`);
+      throw registrationError;
     }
 
     // 4. Initialize leave balances
@@ -795,8 +798,7 @@ export const hrService = {
     return {
       user,
       employee,
-      location_assignment: locationAssignment,
-      temporary_password: 'ChangeMe123!'
+      location_assignment: locationAssignment
     };
   },
 

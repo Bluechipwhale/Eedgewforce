@@ -360,8 +360,12 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
       setStatusMsg('First name and last name are required.');
       return;
     }
-    if (!registerForm.email && !registerForm.phone) {
-      setStatusMsg('Please provide an official email address or phone number.');
+    if (!registerForm.email) {
+      setStatusMsg('A corporate email address is required.');
+      return;
+    }
+    if (registerForm.password.trim().length < 8 || registerForm.password === 'ChangeMe123!') {
+      setStatusMsg('Set a unique password of at least 8 characters.');
       return;
     }
 
@@ -369,9 +373,8 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
     setStatusMsg('');
     try {
       await api.post('/hr/employees/register', registerForm);
-      const chosenPwd = registerForm.password ? registerForm.password : 'ChangeMe123!';
       const idUsed = registerForm.email || registerForm.phone;
-      setStatusMsg(`Staff member ${registerForm.first_name} ${registerForm.last_name} registered successfully! (Login: ${idUsed}, Password: ${chosenPwd})`);
+      setStatusMsg(`Staff member ${registerForm.first_name} ${registerForm.last_name} registered successfully. Login: ${idUsed}`);
       setRegisterModalOpen(false);
       setRegisterForm({
         first_name: '',
@@ -1445,14 +1448,16 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
 
             <div>
               <label className="block text-xs font-bold text-zinc-800 dark:text-zinc-200 mb-1 flex items-center justify-between">
-                <span>Account Login Password</span>
-                <span className="text-[10px] text-zinc-400 font-normal">Optional</span>
+                <span>Account Login Password *</span>
               </label>
               <div className="relative">
                 <input
                   type={showRegisterPassword ? 'text' : 'password'}
-                  placeholder="Leave blank for ChangeMe123!"
+                  placeholder="Unique password (8 characters minimum)"
                   className="form-input pr-9 font-mono"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
                   value={registerForm.password}
                   onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
                 />
@@ -1466,7 +1471,7 @@ export default function HRDashboard({ user, initialTab = 'overview' }) {
                 </button>
               </div>
               <span className="text-[10px] text-zinc-400 mt-0.5 block">
-                Custom password (or leave blank to assign default ChangeMe123!)
+                Staff must change this password on first login.
               </span>
             </div>
 

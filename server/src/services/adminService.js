@@ -6,8 +6,15 @@ import { db, supabase } from '../config/database.js';
 import { supabaseAuthService } from './supabaseAuthService.js';
 import { logger } from '../utils/logger.js';
 import bcrypt from 'bcryptjs';
-import { findEmployeeByAnyId } from '../utils/id.js';
+import { findEmployeeByAnyId, userRef } from '../utils/id.js';
 import { isTestMode } from '../utils/runtime.js';
+
+async function auditActorRef(actor) {
+  if (!actor) return null;
+  if (actor.uuid) return actor.uuid;
+  const account = actor.id ? await db.findById('users', actor.id) : null;
+  return account?.uuid || (isTestMode ? userRef(actor) : null);
+}
 
 export const adminService = {
   /**
@@ -21,6 +28,11 @@ export const adminService = {
       adminUser,
       operationalSettings
     } = payload;
+
+    const initialPassword = adminUser?.password?.trim() || (isTestMode ? 'ChangeMe123!' : '');
+    if (adminUser && (initialPassword.length < 8 || (!isTestMode && initialPassword === 'ChangeMe123!'))) {
+      throw new Error('Set a unique initial administrator password of at least 8 characters.');
+    }
 
     return await db.transaction(async (trx) => {
       // Step 1: Create Company
@@ -91,7 +103,7 @@ export const adminService = {
 
       // Step 4: Create Company Admin User if provided
       if (adminUser) {
-        const passwordHash = bcrypt.hashSync(adminUser.password || 'ChangeMe123!', 10);
+        const passwordHash = bcrypt.hashSync(initialPassword, 10);
         const newUser = await trx.insert('users', {
           company_id: companyId,
           full_name: adminUser.full_name || 'Company Administrator',
@@ -99,12 +111,13 @@ export const adminService = {
           password_hash: passwordHash,
           phone: adminUser.phone || '',
           role_code: 'ADMIN',
-          status: 'active'
+          status: 'active',
+          requires_password_change: true
         });
 
         await trx.insert('employees', {
           company_id: companyId,
-          user_id: newUser.id,
+          user_id: userRef(newUser),
           employee_code: `EMP-${Date.now().toString().slice(-4)}`,
           first_name: adminUser.first_name || 'Admin',
           last_name: adminUser.last_name || 'User',
@@ -117,13 +130,12 @@ export const adminService = {
 
       // Step 5: Audit Log
       await trx.insert('audit_logs', {
-        company_id: companyId,
-        user_id: user?.id || null,
-        user_email: user?.email || 'system',
+        actor_id: await auditActorRef(user),
+        actor_email: user?.email || 'system',
         action: 'COMPANY_ONBOARDED',
         entity: 'companies',
         entity_id: String(companyId),
-        new_value: { name: company.name, email: company.email }
+        metadata: { company_id: companyId, name: company.name, email: company.email }
       });
 
       return { company, settings };
@@ -151,14 +163,12 @@ export const adminService = {
     }
 
     await db.insert('audit_logs', {
-      company_id: Number(companyId),
-      user_id: user?.id || null,
-      user_email: user?.email || 'admin',
+      actor_id: await auditActorRef(user),
+      actor_email: user?.email || 'admin',
       action: 'COMPANY_SETTINGS_UPDATED',
       entity: 'company_settings',
       entity_id: String(companyId),
-      previous_value: existing || {},
-      new_value: updated
+      metadata: { company_id: Number(companyId), previous_value: existing || {}, new_value: updated }
     });
 
     return updated;
@@ -182,13 +192,12 @@ export const adminService = {
   },
 
   async resetStaffPassword(employeeId, newPassword, adminUser) {
-    if (!newPassword || newPassword.trim().length < 6) {
-      throw new Error('New password must be at least 6 characters.');
+    if (!newPassword || newPassword.trim().length < 8 || (!isTestMode && newPassword.trim() === 'ChangeMe123!')) {
+      throw new Error('New password must be unique and at least 8 characters.');
     }
     const emp = await findEmployeeByAnyId(db, employeeId);
     if (!emp) throw new Error('Employee not found');
 
-    const bcrypt = (await import('bcryptjs')).default;
     const passwordHash = bcrypt.hashSync(newPassword.trim(), 10);
 
     // Find linked user by user_id, email, work_email or phone
@@ -205,27 +214,22 @@ export const adminService = {
 
     if (user) {
       if (!isTestMode && user.auth_user_id) {
-        try {
-          await supabaseAuthService.updatePassword(user.auth_user_id, newPassword.trim());
-        } catch (sbErr) {
-          logger.warn(`Supabase admin password update note: ${sbErr.message}`);
-        }
+        const updated = await supabaseAuthService.updatePassword(user.auth_user_id, newPassword.trim());
+        if (!updated) throw new Error('Supabase Auth password update failed. The existing password was not changed.');
       }
       await db.update('users', user.id, {
         password_hash: passwordHash,
-        requires_password_change: false
+        requires_password_change: true
       });
-    }
+    } else throw new Error('No user account is linked to this employee. Password was not changed.');
 
     await db.insert('audit_logs', {
-      company_id: emp.company_id || 1,
-      user_id: adminUser?.id || null,
-      user_email: adminUser?.email || 'it_admin',
+      actor_id: await auditActorRef(adminUser),
+      actor_email: adminUser?.email || 'it_admin',
       action: 'STAFF_PASSWORD_RESET',
       entity: 'employees',
       entity_id: String(emp.id),
-      previous_value: {},
-      new_value: { employee_code: emp.employee_code, email: emp.email }
+      metadata: { company_id: emp.company_id || 1, employee_code: emp.employee_code, email: emp.email }
     });
 
     return {
@@ -245,10 +249,12 @@ export const adminService = {
   },
 
   async getAuditLogs(companyId, limit = 50) {
-    const filter = companyId ? { company_id: Number(companyId) } : {};
-    return await db.find('audit_logs', filter, {
+    const logs = await db.find('audit_logs', {}, {
       order: { column: 'created_at', ascending: false },
-      limit
+      ...(companyId ? {} : { limit })
     });
+    return companyId
+      ? logs.filter(log => Number(log.metadata?.company_id) === Number(companyId)).slice(0, limit)
+      : logs;
   }
 };

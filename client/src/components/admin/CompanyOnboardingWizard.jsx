@@ -61,7 +61,7 @@ export default function CompanyOnboardingWizard({ isOpen, onClose, onSuccess }) 
     full_name: '',
     email: '',
     phone: '',
-    password: 'ChangeMe123!'
+    password: ''
   });
 
   // Step 5: Operational Settings
@@ -96,6 +96,10 @@ export default function CompanyOnboardingWizard({ isOpen, onClose, onSuccess }) 
   };
 
   const handleSubmit = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminUser.email.trim()) || adminUser.password.trim().length < 8 || adminUser.password.trim() === 'ChangeMe123!') {
+      setErrorMsg('Enter an administrator email and a unique password of at least 8 characters.');
+      return;
+    }
     setSubmitting(true);
     setErrorMsg('');
     try {
@@ -406,9 +410,10 @@ export default function CompanyOnboardingWizard({ isOpen, onClose, onSuccess }) 
               <div>
                 <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block mb-1">Initial Password</label>
                 <input
-                  type="text"
+                  type="password"
                   value={adminUser.password}
                   onChange={(e) => setAdminUser({ ...adminUser, password: e.target.value })}
+                  minLength={8}
                   className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm font-mono"
                 />
               </div>

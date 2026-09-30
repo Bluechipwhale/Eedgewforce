@@ -180,8 +180,12 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
       setErrorMsg('First name and last name are required.');
       return;
     }
-    if (!registerForm.email && !registerForm.phone) {
-      setErrorMsg('Please provide an official email address or phone number.');
+    if (!registerForm.email) {
+      setErrorMsg('A corporate email address is required.');
+      return;
+    }
+    if (registerForm.password.trim().length < 8 || registerForm.password === 'ChangeMe123!') {
+      setErrorMsg('Set a unique password of at least 8 characters.');
       return;
     }
 
@@ -190,9 +194,8 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
     setErrorMsg('');
     try {
       const res = await api.post('/hr/employees/register', registerForm);
-      const chosenPwd = registerForm.password ? registerForm.password : 'ChangeMe123!';
       const idUsed = registerForm.email || registerForm.phone;
-      setStatusMsg(`✓ Staff registered! Code: ${res.data?.employee_code || res.employee_code}. Login: ${idUsed} | Password: ${chosenPwd}`);
+      setStatusMsg(`Staff registered. Code: ${res.data?.employee_code || res.employee_code}. Login: ${idUsed}`);
       setRegisterModalOpen(false);
       setRegisterForm({
         first_name: '',
@@ -226,8 +229,8 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
   // 2. Staff Password Reset
   const handleChangePassword = async (e) => {
     e.preventDefault();
-    if (!newStaffPassword || newStaffPassword.trim().length < 6) {
-      setErrorMsg('Password must be at least 6 characters.');
+    if (!newStaffPassword || newStaffPassword.trim().length < 8 || newStaffPassword.trim() === 'ChangeMe123!') {
+      setErrorMsg('Set a unique password of at least 8 characters.');
       return;
     }
     setSavingPassword(true);
@@ -959,7 +962,7 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
               <span>Security & Access Control</span>
             </h3>
             <p className="text-xs text-zinc-500 leading-relaxed">
-              Default password is set to <code className="font-mono text-orange-600 bg-orange-500/10 px-1.5 py-0.5 rounded">ChangeMe123!</code> upon initial registration. IT Super Admins can update any department account's password at any time via the Staff Directory tab.
+              Give each new staff member a unique initial password. Use Staff Directory to reset an individual account when needed.
             </p>
             <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 text-xs space-y-1">
               <div className="font-bold text-zinc-800 dark:text-zinc-200">Department Passwords:</div>
@@ -1038,13 +1041,16 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
                   <Lock size={13} />
                   <span>Account Login Password</span>
                 </span>
-                <span className="text-[10px] text-zinc-500 font-normal">Leave blank for default: ChangeMe123!</span>
+                <span className="text-[10px] text-zinc-500 font-normal">Required</span>
               </label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Set custom password (min. 6 chars) or leave blank for ChangeMe123!"
+                  placeholder="Unique password (8 characters minimum)"
                   className="form-input pr-10 font-mono text-xs"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
                   value={registerForm.password}
                   onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
                 />
@@ -1157,7 +1163,7 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
           </div>
 
           <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-[11px] text-zinc-700 dark:text-zinc-300">
-            A login account will be generated automatically. Initial password: <b className="font-mono text-orange-600 dark:text-orange-400">ChangeMe123!</b>
+            The staff member will change the initial password on first login.
           </div>
 
           <div className="flex gap-3 pt-2">
@@ -1196,19 +1202,20 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
 
           <div>
             <label className="block font-bold text-zinc-700 dark:text-zinc-300 mb-1">
-              New Custom Department Password *
+              New Staff Password *
             </label>
             <input
-              type="text"
+              type="password"
               required
-              minLength="6"
-              placeholder="e.g. SalesTeam2026! or Operations99#"
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Unique password (8 characters minimum)"
               value={newStaffPassword}
               onChange={(e) => setNewStaffPassword(e.target.value)}
               className="form-input font-mono font-bold"
             />
             <span className="text-[10px] text-zinc-400 mt-1 block">
-              Enter a new secure password (minimum 6 characters). This will overwrite ChangeMe123!.
+              Set a unique password of at least 8 characters for this staff member.
             </span>
           </div>
 

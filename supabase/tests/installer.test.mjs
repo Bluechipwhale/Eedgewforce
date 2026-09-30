@@ -60,6 +60,25 @@ async function assertWrites(db) {
   const linked = (await db.query('SELECT count(*) AS n FROM employees e JOIN users u ON e.user_id=u.uuid WHERE e.auth_user_id=u.auth_user_id AND u.id=1')).rows[0];
   assert.equal(Number(linked.n), 1);
   await assert.rejects(db.exec("INSERT INTO attendance(employee_id,date) SELECT uuid,'2026-09-29' FROM employees WHERE id=11"), { code: '23505' });
+
+  await db.exec(`
+    INSERT INTO users(company_id,full_name,email,password_hash,role_code,requires_password_change)
+      VALUES (1,'New Staff','installer-new-staff@example.invalid','test-hash','EMPLOYEE',true);
+    INSERT INTO employees(company_id,user_id,employee_code,first_name,last_name,department,position,work_email)
+      SELECT 1,uuid,'INSTALLER-NEW-STAFF','New','Staff','Operations','Officer',email
+      FROM users WHERE email='installer-new-staff@example.invalid';
+    INSERT INTO employee_location_assignments(company_id,employee_id,location_id,is_primary)
+      SELECT 1,e.uuid,l.id,true FROM employees e CROSS JOIN work_locations l
+      WHERE e.employee_code='INSTALLER-NEW-STAFF' AND l.name='Installer test workplace';
+    INSERT INTO audit_logs(actor_id,actor_email,action,entity,entity_id,metadata)
+      SELECT uuid,email,'STAFF_REGISTERED','employees','INSTALLER-NEW-STAFF','{}'::jsonb
+      FROM users WHERE email='installer-new-staff@example.invalid';
+  `);
+  const registered = (await db.query(`SELECT count(*) AS n FROM employees e
+    JOIN users u ON e.user_id=u.uuid
+    JOIN employee_location_assignments a ON a.employee_id=e.uuid
+    WHERE u.email='installer-new-staff@example.invalid'`)).rows[0];
+  assert.equal(Number(registered.n), 1);
 }
 
 test('all four SQL entry points install and rerun without changing staff or assignments', async () => {
@@ -75,11 +94,11 @@ test('all four SQL entry points install and rerun without changing staff or assi
       await db.exec(sql(file));
       assert.deepEqual(await snapshot(db), before, file);
     }
-    assert.equal(Number((await db.query('SELECT count(*) AS n FROM employee_location_assignments')).rows[0].n), 1);
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM employee_location_assignments')).rows[0].n), 2);
     assert.equal(Number((await db.query('SELECT count(*) AS n FROM private.edgewforce_migrations')).rows[0].n), migrations.length);
     await db.exec('DELETE FROM employees WHERE id=68');
     await db.exec(sql('seed.sql'));
-    assert.equal(Number((await db.query('SELECT count(*) AS n FROM employees')).rows[0].n), 67, 'A rerun must not recreate deleted staff');
+    assert.equal(Number((await db.query('SELECT count(*) AS n FROM employees')).rows[0].n), 68, 'A rerun must not recreate deleted staff');
     const damagedBundle = installer().replace(/checksum <> '[a-f0-9]{64}'/, "checksum <> 'changed-checksum'");
     await assert.rejects(db.exec(damagedBundle), /edited after installation/);
     await db.exec('ROLLBACK');
