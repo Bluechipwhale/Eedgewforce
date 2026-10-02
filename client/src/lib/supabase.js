@@ -69,7 +69,7 @@ export async function requestSupabasePasswordReset(email) {
   
   // Production vs Local redirect URL
   const origin = window.location.origin;
-  const redirectTo = `${origin}/#reset-password`;
+  const redirectTo = `${origin}/`;
 
   const { data, error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
     redirectTo

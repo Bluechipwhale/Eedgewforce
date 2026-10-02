@@ -8,6 +8,19 @@ import { logger } from '../utils/logger.js';
 import { isTestMode } from '../utils/runtime.js';
 const CLIENT_URL = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'http://localhost:5173';
 
+export function recoveryRedirectUrl(requestOrigin) {
+  let base = CLIENT_URL;
+  if (requestOrigin) {
+    try {
+      const parsed = new URL(requestOrigin);
+      if (['http:', 'https:'].includes(parsed.protocol) && parsed.origin === requestOrigin) {
+        base = parsed.origin;
+      }
+    } catch {}
+  }
+  return `${base.replace(/\/$/, '')}/`;
+}
+
 export const supabaseAuthService = {
   /**
    * Provisions a real user in Supabase Auth (auth.users).
@@ -103,11 +116,11 @@ export const supabaseAuthService = {
   /**
    * Sends an official Supabase password reset email.
    */
-  async requestPasswordReset(email) {
+  async requestPasswordReset(email, requestOrigin = null) {
     if (isTestMode || !createSupabaseAuthClient || !email) return { error: new Error('Supabase not configured') };
     try {
       const cleanEmail = email.toLowerCase().trim();
-      const redirectTo = `${CLIENT_URL}/#reset-password`;
+      const redirectTo = recoveryRedirectUrl(requestOrigin);
       const res = await createSupabaseAuthClient().auth.resetPasswordForEmail(cleanEmail, { redirectTo });
       return res;
     } catch (err) {

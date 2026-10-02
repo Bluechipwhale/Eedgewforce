@@ -26,6 +26,9 @@ import { api } from './lib/api';
 import { supabase, getSupabaseSession, signOutSupabase } from './lib/supabase';
 
 export default function App() {
+  const [recoveryMode, setRecoveryMode] = useState(() =>
+    window.location.hash.includes('type=recovery') || window.location.hash.includes('reset-password')
+  );
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem('ewf_user');
@@ -148,6 +151,7 @@ export default function App() {
     // Subscribe to Supabase Auth state changes
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
         if (['SIGNED_IN', 'TOKEN_REFRESHED'].includes(event) && session?.access_token) {
           localStorage.setItem('ewf_token', session.access_token);
           api.get('/auth/me')
@@ -195,7 +199,14 @@ export default function App() {
     void signOutSupabase();
   };
 
-  if (loading) {
+  const handleRecoveryComplete = async () => {
+    setRecoveryMode(false);
+    setUser(null);
+    setMustChangePassword(false);
+    await signOutSupabase();
+  };
+
+  if (loading && !recoveryMode) {
     return (
       <div className="min-h-screen flex items-center justify-center surface-bg">
         <div className="flex flex-col items-center gap-3">
@@ -207,8 +218,8 @@ export default function App() {
   }
 
   // Public/Auth Flows
-  if (!user) {
-    return <LoginPage onLogin={handleLoginSuccess} />;
+  if (recoveryMode || !user) {
+    return <LoginPage onLogin={handleLoginSuccess} onRecoveryComplete={handleRecoveryComplete} />;
   }
 
   // Render Role & Feature Dashboards with Strict Least-Privilege Routing Guards

@@ -3,7 +3,7 @@ import { ArrowRight, ShieldCheck, Sparkles, AlertCircle, KeyRound, CheckCircle2,
 import { api } from '../lib/api';
 import { supabase } from '../lib/supabase';
 
-export default function LoginPage({ onLogin, onNavigatePublic }) {
+export default function LoginPage({ onLogin, onNavigatePublic, onRecoveryComplete }) {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -150,10 +150,20 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
       setConfirmPassword('');
       setIsRecoverySession(false);
       window.history.replaceState(null, '', window.location.pathname);
+      await onRecoveryComplete?.();
     } catch (err) {
       setForgotError(err.message || 'Password update failed. Please request a new recovery link.');
     } finally {
       setForgotLoading(false);
+    }
+  };
+
+  const closeForgotModal = () => {
+    setForgotModalOpen(false);
+    if (isRecoverySession) {
+      setIsRecoverySession(false);
+      window.history.replaceState(null, '', window.location.pathname);
+      void onRecoveryComplete?.();
     }
   };
 
@@ -319,7 +329,7 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
                 </div>
               </div>
               <button
-                onClick={() => setForgotModalOpen(false)}
+                onClick={closeForgotModal}
                 className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition"
               >
                 <X size={18} />
@@ -356,7 +366,7 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
                 <div className="flex gap-2 justify-end pt-2">
                   <button
                     type="button"
-                    onClick={() => setForgotModalOpen(false)}
+                    onClick={closeForgotModal}
                     className="btn-secondary text-xs py-2 px-4"
                   >
                     Cancel
@@ -401,7 +411,10 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
                 <div className="flex gap-2 justify-between pt-2">
                   <button
                     type="button"
-                    onClick={() => setForgotStep(1)}
+                    onClick={() => {
+                      if (isRecoverySession) closeForgotModal();
+                      setForgotStep(1);
+                    }}
                     className="text-xs text-zinc-400 hover:text-white"
                   >
                     ← Back to Step 1
@@ -409,7 +422,7 @@ export default function LoginPage({ onLogin, onNavigatePublic }) {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setForgotModalOpen(false)}
+                      onClick={closeForgotModal}
                       className="btn-secondary text-xs py-2 px-4"
                     >
                       Cancel

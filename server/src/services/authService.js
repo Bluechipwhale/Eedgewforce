@@ -448,7 +448,7 @@ export const authService = {
     // 1. Supabase Auth Recovery Dispatch (Official Cloud Flow)
     if (!isTestMode && targetEmail) {
       try {
-        const { error } = await supabaseAuthService.requestPasswordReset(targetEmail);
+        const { error } = await supabaseAuthService.requestPasswordReset(targetEmail, req?.headers?.origin);
         if (!error) {
           supabaseRecoveryDispatched = true;
         }
