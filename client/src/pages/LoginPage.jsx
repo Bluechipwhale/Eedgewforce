@@ -148,6 +148,7 @@ export default function LoginPage({ onLogin, onNavigatePublic, onRecoveryComplet
       setForgotIdentifier('');
       setNewPassword('');
       setConfirmPassword('');
+      setPassword('');
       setIsRecoverySession(false);
       window.history.replaceState(null, '', window.location.pathname);
       await onRecoveryComplete?.();
