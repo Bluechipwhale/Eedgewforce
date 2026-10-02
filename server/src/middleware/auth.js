@@ -6,6 +6,7 @@
 import jwt from 'jsonwebtoken';
 import { db, supabase } from '../config/database.js';
 import { isUuid, userRef } from '../utils/id.js';
+import { isServiceUnavailable, sendServiceUnavailable } from '../utils/serviceAvailability.js';
 
 const JWT_SECRET = process.env.JWT_SECRET
   || process.env.SUPABASE_JWT_SECRET
@@ -40,7 +41,9 @@ export async function requireAuth(req, res, next) {
           authUserId = sbData.user.id;
           authEmail = sbData.user.email?.toLowerCase();
         }
-      } catch {
+        if (isServiceUnavailable(sbErr)) throw sbErr;
+      } catch (error) {
+        if (isServiceUnavailable(error)) throw error;
         // Fall through to JWT decoding
       }
     }
@@ -131,9 +134,10 @@ export async function requireAuth(req, res, next) {
         error: { code: 'TOKEN_EXPIRED', message: 'Session token has expired. Please sign in again.' }
       });
     }
-    return res.status(401).json({
+    if (isServiceUnavailable(error)) return sendServiceUnavailable(res);
+    return res.status(500).json({
       success: false,
-      error: { code: 'INVALID_TOKEN', message: 'Invalid authentication token.' }
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Unable to verify your session.' }
     });
   }
 }

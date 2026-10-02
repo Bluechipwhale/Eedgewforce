@@ -3,6 +3,7 @@
 // ==============================================================================
 
 import { authService } from '../services/authService.js';
+import { isServiceUnavailable, sendServiceUnavailable } from '../utils/serviceAvailability.js';
 
 export const authController = {
   async login(req, res) {
@@ -12,6 +13,7 @@ export const authController = {
       const result = await authService.login(idToUse, password, req);
       res.json({ success: true, data: result, token: result.token, user: result.user, message: 'Signed in successfully.' });
     } catch (err) {
+      if (isServiceUnavailable(err)) return sendServiceUnavailable(res);
       res.status(400).json({ success: false, error: { code: 'AUTH_FAILED', message: err.message } });
     }
   },
@@ -21,7 +23,11 @@ export const authController = {
       const user = await authService.me(req.user.id);
       res.json({ success: true, data: user, user });
     } catch (err) {
-      res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: err.message } });
+      if (isServiceUnavailable(err)) return sendServiceUnavailable(res);
+      if (err.message === 'User not found') {
+        return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: err.message } });
+      }
+      res.status(500).json({ success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'Unable to load your profile.' } });
     }
   },
 

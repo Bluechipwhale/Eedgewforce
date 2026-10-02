@@ -14,6 +14,7 @@ import { normalizePhone, isEmail, normalizeEmail } from '../utils/phoneNormalize
 import { logger } from '../utils/logger.js';
 import { employeeRef, userRef } from '../utils/id.js';
 import { isTestMode } from '../utils/runtime.js';
+import { isServiceUnavailable } from '../utils/serviceAvailability.js';
 const CLIENT_URL = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'http://localhost:5173';
 
 function normalizeEmployeeRole(roleName) {
@@ -160,6 +161,7 @@ export const authService = {
             user.auth_user_id = authUser.id;
           }
         } else if (sbRes?.error) {
+          if (isServiceUnavailable(sbRes.error)) throw sbRes.error;
           if (user.auth_user_id) throw new Error('Invalid email or password.');
           // Check if local bcrypt password matches (e.g. initial seed account / offline record)
           const isMatch = user.password_hash ? await bcrypt.compare(password, user.password_hash) : false;
@@ -196,6 +198,7 @@ export const authService = {
           }
         }
       } catch (err) {
+        if (isServiceUnavailable(err)) throw err;
         if (err.message.includes('Invalid email or password') || err.message.includes('Invalid login credentials')) {
           throw err;
         }

@@ -29,20 +29,10 @@ export default function App() {
   const [recoveryMode, setRecoveryMode] = useState(() =>
     window.location.hash.includes('type=recovery') || window.location.hash.includes('reset-password')
   );
-  const [user, setUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('ewf_user');
-      const token = localStorage.getItem('ewf_token') || localStorage.getItem('ewf_supabase_auth');
-      return (saved && token) ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(() => {
     const token = localStorage.getItem('ewf_token') || localStorage.getItem('ewf_supabase_auth');
-    const saved = localStorage.getItem('ewf_user');
-    // If cached session exists, render immediately without blocking full screen
-    return Boolean(token && !saved);
+    return Boolean(token);
   });
   const [currentTab, setCurrentTab] = useState(() => {
     return localStorage.getItem('ewf_current_tab') || 'dashboard';
@@ -109,7 +99,7 @@ export default function App() {
     const checkSessionAndFetchMe = async () => {
       try {
         let token = localStorage.getItem('ewf_token');
-        if (!token && supabase) {
+        if (supabase) {
           const sbSession = await getSupabaseSession();
           if (sbSession?.access_token) {
             token = sbSession.access_token;
