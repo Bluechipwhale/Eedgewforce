@@ -495,10 +495,12 @@ export const hrService = {
    * Builds the interactive organization tree from CEO down to operational staff.
    */
   async getOrganizationTree() {
-    const employees = await db.find('employees');
-    const ranks = await db.find('ranks');
-    const departments = await db.find('departments');
-    const users = await db.find('users');
+    const [employees, ranks, departments, users] = await Promise.all([
+      db.find('employees'),
+      db.find('ranks'),
+      db.find('departments'),
+      db.find('users')
+    ]);
 
     const fullStaff = employees.map(e => {
       const rank = ranks.find(r => r.code === e.rank_code) || { name: 'Staff', level: 8, code: e.rank_code || 'STAFF' };

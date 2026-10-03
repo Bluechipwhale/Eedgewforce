@@ -60,6 +60,9 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataLoaded, setDataLoaded] = useState({ staff: false, inventory: false, locations: false });
+  const [dataIssues, setDataIssues] = useState({});
 
   // Register Staff Modal
   const [registerModalOpen, setRegisterModalOpen] = useState(false);
@@ -129,31 +132,39 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
   });
   const [savingReceipt, setSavingReceipt] = useState(false);
 
-  const loadData = async () => {
-    try {
-      const [emps, aud, locs, org, prods, movs, sett] = await Promise.all([
-        api.get('/hr/employees').catch(() => []),
-        api.get('/hr/dashboard').catch(() => null),
-        api.get('/locations?status=active').catch(() => ({ data: [] })),
-        api.get('/hr/organization').catch(() => null),
-        api.get('/inventory/products').catch(() => ({ data: [] })),
-        api.get('/inventory/movements').catch(() => ({ data: [] })),
-        api.get('/admin/settings').catch(() => ({ data: null }))
-      ]);
+  const loadData = () => {
+    setDataLoading(true);
+    setDataIssues({});
 
-      setEmployees(Array.isArray(emps) ? emps : (emps?.employees || emps?.data || []));
-      setAuditLogs(aud?.idle_records || []);
-      setAvailableLocations(Array.isArray(locs) ? locs : (locs?.data || locs?.locations || []));
-      setOrgTree(org);
+    const asList = (result, key) => {
+      const list = Array.isArray(result) ? result : (result?.[key] ?? result?.data);
+      if (!Array.isArray(list)) throw new Error('Unexpected response from the server.');
+      return list;
+    };
+    const load = async (key, path, apply, timeoutMs = 15000) => {
+      try {
+        const result = await api.get(path, { fresh: true, signal: AbortSignal.timeout(timeoutMs) });
+        apply(result);
+        if (['staff', 'inventory', 'locations'].includes(key)) {
+          setDataLoaded(previous => ({ ...previous, [key]: true }));
+        }
+      } catch (error) {
+        setDataIssues(previous => ({
+          ...previous,
+          [key]: error.name === 'TimeoutError' ? 'Request timed out.' : (error.message || 'Request failed.')
+        }));
+      }
+    };
 
-      const prodList = Array.isArray(prods) ? prods : (prods?.data || prods?.products || []);
-      setProducts(prodList);
-
-      const movList = Array.isArray(movs) ? movs : (movs?.data || movs?.movements || []);
-      setMovements(movList);
-
-      const sData = sett?.data || sett;
-      if (sData) {
+    const requests = [
+      load('staff', '/hr/employees', result => setEmployees(asList(result, 'employees'))),
+      load('locations', '/locations?status=active', result => setAvailableLocations(asList(result, 'locations'))),
+      load('inventory', '/inventory/products', result => setProducts(asList(result, 'products'))),
+      load('dashboard', '/hr/dashboard', result => setAuditLogs(result?.idle_records || [])),
+      load('movements', '/inventory/movements', result => setMovements(asList(result, 'movements'))),
+      load('settings', '/admin/settings', result => {
+        const sData = result?.data || result;
+        if (!sData) return;
         setCompanySettings(sData);
         setReceiptForm({
           receipt_company_name: sData.receipt_company_name || 'EXPERIENTIAL EDGE',
@@ -163,15 +174,21 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
           receipt_phone: sData.receipt_phone || '+2348031234567',
           receipt_footer_note: sData.receipt_footer_note || 'Thank you for your business. Verified by EdgeWForce Operating System.'
         });
-      }
-    } catch {
-      // Graceful offline fallback
+      })
+    ];
+    if (activeTab === 'hierarchy') {
+      requests.push(load('organization', '/hr/organization', setOrgTree, 30000));
     }
+    return Promise.all(requests).finally(() => setDataLoading(false));
   };
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'hierarchy' && !orgTree) loadData();
+  }, [activeTab]);
 
   // 1. Staff Registration
   const handleRegisterStaff = async (e) => {
@@ -348,6 +365,9 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
         </div>
 
         <div className="flex items-center gap-2">
+          <button onClick={loadData} className="p-2 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100" title="Refresh admin data" aria-label="Refresh admin data">
+            <RefreshCw size={16} className={dataLoading ? 'animate-spin' : ''} />
+          </button>
           <button
             onClick={() => setRegisterModalOpen(true)}
             className="btn-primary text-xs py-2 px-3 shadow-xs"
@@ -373,25 +393,32 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
         </div>
       )}
 
+      {Object.keys(dataIssues).length > 0 && (
+        <div className="p-3.5 border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between gap-3">
+          <span>Unable to load {Object.entries(dataIssues).map(([section, message]) => `${section}: ${message}`).join(' | ')}</span>
+          <button onClick={loadData} className="shrink-0 font-semibold underline">Retry</button>
+        </div>
+      )}
+
       {/* Super Admin Top Stat Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           title="Total Registered Staff"
-          value={employees.length}
+          value={dataLoaded.staff ? employees.length : '--'}
           icon={Users}
-          subtitle="Active Accounts"
+          subtitle={dataIssues.staff ? 'Load failed' : dataLoaded.staff ? 'Active Accounts' : 'Loading...'}
         />
         <StatCard
           title="Supply Chain SKUs"
-          value={products.length}
+          value={dataLoaded.inventory ? products.length : '--'}
           icon={Boxes}
-          subtitle="Inventory Catalog"
+          subtitle={dataIssues.inventory ? 'Load failed' : dataLoaded.inventory ? 'Inventory Catalog' : 'Loading...'}
         />
         <StatCard
           title="Work Locations"
-          value={availableLocations.length}
+          value={dataLoaded.locations ? availableLocations.length : '--'}
           icon={Building2}
-          subtitle="Geofenced Sites"
+          subtitle={dataIssues.locations ? 'Load failed' : dataLoaded.locations ? 'Geofenced Sites' : 'Loading...'}
         />
         <StatCard
           title="Cloud Engine"
@@ -412,7 +439,7 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
           }`}
         >
           <Users size={15} />
-          <span>Staff Directory ({employees.length})</span>
+          <span>Staff Directory ({dataLoaded.staff ? employees.length : '...'})</span>
         </button>
 
         <button
@@ -424,7 +451,7 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
           }`}
         >
           <Boxes size={15} />
-          <span>Supply Chain & Logistics ({products.length})</span>
+          <span>Supply Chain & Logistics ({dataLoaded.inventory ? products.length : '...'})</span>
         </button>
 
         <button
@@ -919,7 +946,11 @@ export default function ITAdminDashboard({ user, onSelectTab }) {
             <Network size={18} className="text-orange-500" />
             <span>Corporate Organizational Structure & Reporting Hierarchy</span>
           </h3>
-          <OrgChartTree orgTree={orgTree} user={user} onRefresh={loadData} />
+          {dataIssues.organization && !orgTree ? (
+            <div className="text-xs text-rose-700 dark:text-rose-300">
+              Organization chart could not be loaded. <button onClick={loadData} className="font-semibold underline">Retry</button>
+            </div>
+          ) : <OrgChartTree orgTree={orgTree} user={user} onRefresh={loadData} />}
         </div>
       )}
 
